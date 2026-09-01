@@ -1,0 +1,9 @@
+[tool.uv.workspace]
+members = [
+    "backend",
+    "mcp-server",
+    "cli",
+]
+
+[tool.uv]
+# 统一在 workspace 根目录共享 venv 与 uv.lock

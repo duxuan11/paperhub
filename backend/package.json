@@ -1,0 +1,9 @@
+{
+  "name": "paperhub-backend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "server": "exec uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
+    "worker": "exec uv run arq app.workers.main.WorkerSettings"
+  }
+}
