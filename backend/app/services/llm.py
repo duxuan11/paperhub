@@ -1,8 +1,8 @@
-"""LLM 客户端（OpenAI-compatible）+ Mock 实现。
+"""LLM 客户端（OpenAI-compatible）+ Open WebUI 瘦客户端 + Mock 实现。
 
 真实实现调用任意 OpenAI-compatible /chat/completions（DeepSeek/OpenAI/Ollama...）。
-未配置 API Key 时使用 MockLLMService，基于传入的论文上下文生成确定性回复，
-保证 Demo 无需 Key 也能演示。
+配置 Open WebUI 后，页面 Chat 作为其瘦客户端（单 Agent），Memory/Tool/MCP/历史
+统一由 Open WebUI 持有；未配置时依次降级为直连 LLM / MockLLMService。
 """
 
 from __future__ import annotations
@@ -29,6 +29,12 @@ class LLMService:
 
 
 def get_llm_service() -> LLMService:
+    if settings.open_webui_url and settings.open_webui_api_key:
+        return OpenWebUIService(
+            settings.open_webui_url,
+            settings.open_webui_api_key,
+            settings.open_webui_model or settings.openai_model,
+        )
     if settings.openai_api_key:
         return RealLLMService(
             settings.openai_base_url, settings.openai_api_key, settings.openai_model
@@ -37,6 +43,8 @@ def get_llm_service() -> LLMService:
 
 
 def llm_mode() -> str:
+    if settings.open_webui_url and settings.open_webui_api_key:
+        return "openwebui"
     return "real" if settings.openai_api_key else "mock"
 
 
@@ -89,6 +97,17 @@ class RealLLMService(LLMService):
                             yield delta
                     except (json.JSONDecodeError, KeyError, IndexError):
                         continue
+
+
+class OpenWebUIService(RealLLMService):
+    """Open WebUI 的 OpenAI 兼容 Chat API 瘦客户端（单 Agent）。
+
+    页面 Chat 复用 Open WebUI 的 Agent 能力：Memory / Tool / MCP / 对话历史 / Prompt
+    全部由 Open WebUI 统一持有，PaperHub 不再维护第二套 LLM 客户端。
+    """
+
+    def _endpoint(self) -> str:
+        return f"{self.base_url}/api/chat/completions"
 
 
 class MockLLMService(LLMService):

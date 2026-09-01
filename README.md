@@ -14,7 +14,7 @@
 - PDF → MinerU 解析 → 结构化 Markdown + 图片
 - YOLO Figure 检测（可配置模型 / 无模型时启发式降级）
 - 三栏论文阅读器（目录 / Markdown / AI Chat）
-- AI Chat（OpenAI-compatible，默认 DeepSeek，无 Key 时 Mock）
+- AI Chat（单 Agent：优先 Open WebUI，未配置时 OpenAI-compatible / Mock）
 - Skill 系统（paper-summary / figure-analysis / wechat-article / 等）
 - 微信公众号文章生成（5 种模板）+ 三栏编辑器
 - 微信公众号草稿箱发布（安全设计：默认不直接发布）
@@ -60,18 +60,18 @@ PostgreSQL      Redis           MinIO
            Markdown + Figures
                    │
                    ▼
-           ┌───────────────┐
-           │  Open WebUI   │ Chat / Agent
-           └───────┬───────┘
-                   │ MCP
-           ┌───────▼───────┐
-           │ PaperHub MCP  │
-           └───────┬───────┘
-                   ▼
-            WeChat Publisher
+   ┌───────────────────────────────┐
+   │  Open WebUI   Chat / Agent    │  ← 页面内 Chat 走这里（瘦客户端）
+   └───────┬──────────────┬────────┘
+           │ MCP          │ /api/chat/completions（OpenAI 兼容）
+   ┌───────▼───────┐  ┌────▼────────┐
+   │ PaperHub MCP  │  │ PaperHub    │
+   └───────┬───────┘  │ API (chat)  │
+           ▼           └────────────┘
+    WeChat Publisher
 ```
 
-**职责划分**：PaperHub 负责论文管理、MinerU 调用、Figure 检测、Markdown 管理、任务管理、公众号内容生成与发布、API / CLI / MCP。Chat / Agent / 模型调用 / 对话历史 / Knowledge / Tool / Skill 复用 Open WebUI；页面内 Chat 则通过 PaperHub 自带 LLM 客户端直接调用 OpenAI-compatible API。
+**职责划分**：PaperHub 负责论文管理、MinerU 调用、Figure 检测、Markdown 管理、任务管理、公众号内容生成与发布、API / CLI / MCP。Chat / Agent / 模型调用 / 对话历史 / Memory / Tool / MCP / Prompt 统一由 **Open WebUI** 持有；页面内 Chat 是 Open WebUI 的**瘦客户端**（复用其 Chat API），不维护第二套 Agent。Open WebUI 未配置时，页面内 Chat 降级为 PaperHub 直连 OpenAI-compatible API / Mock（仅演示用）。
 
 ## 目录结构
 
@@ -183,9 +183,19 @@ OPENAI_MODEL=deepseek-chat
 
 支持任意 OpenAI-compatible 端点：OpenAI / DeepSeek / Gemini-compatible / 本地 Ollama（`OPENAI_BASE_URL=http://localhost:11434/v1`）。**未配置 Key 时使用 MockLLMService**，仍可完整演示。
 
+> **单 Agent 架构**：配齐 `OPEN_WEBUI_URL + OPEN_WEBUI_API_KEY` 后，页面内 Chat 自动切换为 Open WebUI 的瘦客户端（Memory / Tool / MCP / 历史 / Prompt 统一由 Open WebUI 持有），不再维护第二套 LLM 客户端；未配置时降级为直连 / Mock。见下方 Open WebUI 配置。
+
 ## Open WebUI 配置
 
 `docker compose up -d` 会一并启动 Open WebUI（http://localhost:8080）。
+
+页面内 Chat 复用 Open WebUI 作为单一 Agent，需三件配置：
+
+```env
+OPEN_WEBUI_URL=http://localhost:8080
+OPEN_WEBUI_API_KEY=<在 Open WebUI「设置 → 账号 → API 密钥」生成>
+OPEN_WEBUI_MODEL=openwebui/deepseek-chat:default   # 留空回退 OPENAI_MODEL
+```
 
 在 Open WebUI 中接入 PaperHub MCP Server：`设置 → 连接 → MCP Servers`，添加：
 

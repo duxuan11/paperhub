@@ -5,6 +5,8 @@ import { apiGet } from "@/lib/api";
 import type { Health } from "@/lib/types";
 
 interface SettingsInfo {
+  llm_mode: string;
+  open_webui_configured: boolean;
   llm_base_url: string;
   llm_model: string;
   llm_configured: boolean;
@@ -27,7 +29,11 @@ export default function SettingsPage() {
     {
       label: "LLM",
       ok: !!info?.llm_configured,
-      value: info ? `${info.llm_base_url} / ${info.llm_model}` : "…",
+      value: info
+        ? `${info.llm_base_url} / ${info.llm_model}${
+            info.open_webui_configured ? "（Open WebUI 单 Agent）" : ""
+          }`
+        : "…",
     },
     { label: "MinerU", ok: !!info?.mineru_configured, value: info?.mineru_configured ? "已配置" : "Mock 模式" },
     { label: "YOLO", ok: !!info?.yolo_configured, value: info?.yolo_configured ? "已配置" : "启发式模式" },
@@ -62,6 +68,8 @@ export default function SettingsPage() {
           <p className="font-medium text-neutral-500 mb-1">配置项（.env）</p>
           <code className="block text-[11px]">
             OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL
+            <br />
+            OPEN_WEBUI_URL / OPEN_WEBUI_API_KEY / OPEN_WEBUI_MODEL
             <br />
             MINERU_API_URL / MINERU_API_KEY
             <br />

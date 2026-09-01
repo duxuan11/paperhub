@@ -54,6 +54,14 @@ class Settings(BaseSettings):
     openai_model: str = "deepseek-chat"
     llm_timeout: int = 120
 
+    # Open WebUI（单 Agent 入口）
+    # 配齐 URL + API Key 后，页面 Chat 将作为 Open WebUI 的瘦客户端，
+    # 由 Open WebUI 统一持有 Memory / Tools / MCP / 对话历史 / Prompt；
+    # 未配置时降级为直连 OpenAI-compatible API / Mock。
+    open_webui_url: str = ""
+    open_webui_api_key: str = ""
+    open_webui_model: str = ""
+
     # 微信公众号
     wechat_app_id: str = ""
     wechat_app_secret: str = ""

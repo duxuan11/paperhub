@@ -15,7 +15,6 @@ out/
 npm-debug.log*
 
 # Env / secrets
-.env
 *.env.local
 
 # Data

@@ -39,10 +39,23 @@ async def skills():
 
 @router.get("/settings", dependencies=[Depends(require_auth)])
 async def settings_info():
+    open_webui_configured = bool(
+        settings.open_webui_url and settings.open_webui_api_key
+    )
     return {
-        "llm_base_url": settings.openai_base_url,
-        "llm_model": settings.openai_model,
-        "llm_configured": bool(settings.openai_api_key),
+        "llm_mode": llm_mode(),
+        "open_webui_configured": open_webui_configured,
+        "llm_base_url": (
+            settings.open_webui_url
+            if open_webui_configured
+            else settings.openai_base_url
+        ),
+        "llm_model": (
+            settings.open_webui_model or settings.openai_model
+            if open_webui_configured
+            else settings.openai_model
+        ),
+        "llm_configured": open_webui_configured or bool(settings.openai_api_key),
         "mineru_configured": bool(settings.mineru_api_key),
         "wechat_configured": bool(settings.wechat_app_id),
         "yolo_configured": bool(settings.yolo_enabled and settings.yolo_model_path),

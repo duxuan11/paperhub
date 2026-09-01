@@ -130,6 +130,9 @@ services:
     environment:
       OPENAI_API_BASE_URL: ${OPENAI_BASE_URL:-https://api.deepseek.com}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # 页面内 Chat 作为 Open WebUI 的瘦客户端（单 Agent）：
+      # .env 中配置 OPEN_WEBUI_URL / OPEN_WEBUI_API_KEY / OPEN_WEBUI_MODEL 后生效，
+      # backend 通过 env_file: .env 自动读取。
       # 通过 Open WebUI 的 Settings -> Connections 配置 MCP Server：
       # command: uv run python /app/mcp-server/server.py (stdio)
     depends_on:
