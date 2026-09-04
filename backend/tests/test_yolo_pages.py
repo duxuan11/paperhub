@@ -1,9 +1,14 @@
-"""PDF 整页渲染 / 区域裁剪（供 YOLO Figure 检测使用）测试。"""
+"""PDF 整页渲染 / 区域裁剪 / ONNX YOLO 后处理（Figure 检测）测试。"""
 
 import tempfile
 from pathlib import Path
 
-from app.services.yolo import crop_page_png, render_pdf_pages
+from app.services.yolo import (
+    OnnxYoloService,
+    _parse_names,
+    crop_page_png,
+    render_pdf_pages,
+)
 
 DEMO = Path(__file__).resolve().parents[2] / "demo" / "paper.pdf"
 PDF = DEMO.read_bytes()
@@ -25,72 +30,51 @@ def test_crop_page_returns_png_bytes():
     assert len(data) > 0
 
 
-class _Box:
-    def __init__(self, conf, cls, xyxy):
-        self.conf = [conf]
-        self.cls = [cls]
-        self.xyxy = [_Row(xyxy)]
+def _make_service():
+    svc = OnnxYoloService("fake.onnx")
+    svc._names = {0: "figure", 1: "title"}
+    svc._input_h = 1024
+    svc._input_w = 1024
+    return svc
 
 
-class _Row:
-    def __init__(self, values):
-        self.values = values
-
-    def tolist(self):
-        return self.values
-
-
-class _Results:
-    def __init__(self, boxes):
-        self.boxes = boxes
+def test_parse_names_json_and_dict_repr():
+    assert _parse_names('{"0": "figure", "1": "title"}') == {0: "figure", 1: "title"}
+    assert _parse_names("{0: 'figure', 1: 'title'}") == {0: "figure", 1: "title"}
+    assert _parse_names({0: "Figure", 1: "Title"}) == {0: "figure", 1: "title"}
+    assert _parse_names(None) == {}
 
 
-class _FakeModel:
-    names = {0: "figure", 1: "table"}
-
-    def __init__(self, per_page):
-        self.per_page = per_page
-
-    def predict(self, path, **kw):
-        import os
-        import re
-
-        n = int(re.search(r"page_(\d+)", os.path.basename(path)).group(1))
-        return [_Results(self.per_page.get(n, []))]
-
-
-def test_detect_pages_selects_highest_conf_box_and_maps_class():
-    from app.services.yolo import UltralyticsYoloService
-
-    model = _FakeModel(
-        {
-            1: [
-                _Box(0.4, 0, [1, 1, 10, 10]),
-                _Box(0.9, 1, [2, 2, 12, 12]),
-            ]
-        }
-    )
-    svc = UltralyticsYoloService("fake.pt")
-    svc._model = model
-
-    async def go():
-        return await svc.detect_pages([("/tmp/page_001.png", 1)])
-
-    import asyncio
-
-    out = asyncio.run(go())
-    assert len(out) == 1
-    assert out[0].type == "table"
-    assert out[0].bbox == [2, 2, 12, 12]
-    assert out[0].page == 1
+def test_postprocess_keeps_figure_and_filters_title_and_low_conf():
+    svc = _make_service()
+    output = [
+        [
+            [100, 100, 200, 200, 0.9, 0],  # figure，保留
+            [300, 300, 400, 400, 0.8, 1],  # title，跳过
+            [50, 50, 60, 60, 0.1, 0],  # figure 但低置信度，跳过
+        ]
+    ]
+    boxes = svc._postprocess(output, orig_h=512, orig_w=512)
+    assert len(boxes) == 1
+    # 512x512 -> r=2.0，无 padding -> 坐标除以 2
+    assert boxes[0] == [50.0, 50.0, 100.0, 100.0]
 
 
-def test_detect_pages_skips_page_without_detections():
-    from app.services.yolo import UltralyticsYoloService
+def test_postprocess_maps_back_from_letterbox_with_padding():
+    svc = _make_service()
+    # 原图 100x200 (h=100, w=200)，输入 1024x1024
+    # r = min(1024/200, 1024/100) = 5.12
+    # pad_y = (1024 - 100*5.12)/2 = 256
+    output = [[[0, 256, 1024, 768, 0.9, 0]]]
+    boxes = svc._postprocess(output, orig_h=100, orig_w=200)
+    assert len(boxes) == 1
+    x1, y1, x2, y2 = boxes[0]
+    assert abs(x1) < 1e-4
+    assert abs(y1) < 1e-4
+    assert abs(x2 - 200) < 1e-4
+    assert abs(y2 - 100) < 1e-4
 
-    svc = UltralyticsYoloService("fake.pt")
-    svc._model = _FakeModel({})
-    import asyncio
 
-    out = asyncio.run(svc.detect_pages([("/tmp/page_001.png", 1)]))
-    assert out == []
+def test_postprocess_empty_when_no_boxes():
+    svc = _make_service()
+    assert svc._postprocess([[]], 512, 512) == []

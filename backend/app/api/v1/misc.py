@@ -23,7 +23,7 @@ async def health():
         mineru_mode="remote"
         if (settings.mineru_api_url and settings.mineru_api_key)
         else "mock",
-        yolo_mode="ultralytics"
+        yolo_mode="onnx"
         if (settings.yolo_enabled and settings.yolo_model_path)
         else "heuristic",
         wechat_mode="real"
