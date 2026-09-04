@@ -69,6 +69,8 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        INSTALL_YOLO: "1"
     restart: unless-stopped
     command: ["uv", "run", "arq", "app.workers.main.WorkerSettings"]
     env_file: .env

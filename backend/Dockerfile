@@ -11,9 +11,16 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 ENV UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/app/.venv
 
+# 是否安装 YOLO（onnxruntime + opencv，仅 worker 需要）
+ARG INSTALL_YOLO=0
+
 # 先复制依赖清单以利用缓存
 COPY backend/pyproject.toml backend/uv.lock ./
-RUN uv sync --frozen --no-install-project || uv sync --no-install-project
+RUN if [ "$INSTALL_YOLO" = "1" ]; then \
+        uv sync --frozen --no-install-project --extra yolo || uv sync --no-install-project --extra yolo; \
+    else \
+        uv sync --frozen --no-install-project || uv sync --no-install-project; \
+    fi
 
 # 复制源码与顶层包
 COPY backend/app ./app
