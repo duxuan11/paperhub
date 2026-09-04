@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     # MinerU
     mineru_api_url: str = ""
     mineru_api_key: str = ""
+    mineru_model_version: str = "pipeline"
 
     # YOLO
     yolo_model_path: str = ""

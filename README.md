@@ -166,10 +166,14 @@ MINERU_API_KEY=your-key
 
 ```env
 YOLO_ENABLED=true
-YOLO_MODEL_PATH=./models/figure.pt
+YOLO_MODEL_PATH=./models/yolo26s.pt
 ```
 
-把训练好的模型放到 `models/`。未配置时使用 `HeuristicFigureService`（将 MinerU 提取的图片归类为 Figure），保证无模型也能跑通。GPU 部署见 docker-compose 中 worker 的 `deploy.resources.reservations.devices` 注释。
+把训练好的 Figure 检测权重放到 `models/` 后启用即可。YOLO 的输入是**整页 PDF 渲染图**（PyMuPDF 渲染），在整页上框出 Figure 后裁剪保存，不再依赖 MinerU 切出的小图；MinerU 仍负责 markdown 文本与正文内嵌图片。
+
+- 依赖：`cd backend && uv sync --extra yolo`（ultralytics + CPU 版 torch）
+- 检测为空（如权重未训练/低置信度）时自动回退为「按 markdown 顺序的内嵌图片」作为 Figure，保证下游流程可用。
+- 未配置 `YOLO_ENABLED`/`YOLO_MODEL_PATH` 时使用回退路径（HeuristicFigureService），无模型也能跑通。
 
 ## LLM 配置（OpenAI-compatible）
 

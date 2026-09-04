@@ -7,6 +7,7 @@ import logging
 import re
 from pathlib import Path
 
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import models
@@ -94,6 +95,10 @@ async def add_figures(session: AsyncSession, paper_id: str, figures: list) -> No
     paper = await session.get(models.Paper, paper_id)
     if not paper:
         return
+    # 重新检测时先清空旧记录，避免重复
+    await session.execute(
+        delete(models.Figure).where(models.Figure.paper_id == paper_id)
+    )
     for i, f in enumerate(figures, start=1):
         session.add(
             models.Figure(
