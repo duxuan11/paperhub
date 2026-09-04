@@ -1,0 +1,154 @@
+name: paperhub
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: paperhub
+      POSTGRES_PASSWORD: paperhub
+      POSTGRES_DB: paperhub
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paperhub"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: paperhub
+      MINIO_ROOT_PASSWORD: paperhub-secret
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://paperhub:paperhub@postgres:5432/paperhub
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./skills:/app/skills
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    command: ["uv", "run", "arq", "app.workers.main.WorkerSettings"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://paperhub:paperhub@postgres:5432/paperhub
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+    volumes:
+      - ./data:/app/data
+      - ./skills:/app/skills
+      - ./models:/app/models
+    # GPU 模式：如本机有 NVIDIA GPU 且需要真实 YOLO，取消下面注释
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    environment:
+      BACKEND_URL: http://backend:8000
+      PAPERHUB_API_KEY: ${PAPERHUB_API_KEY:-}
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+  mcp-server:
+    build:
+      context: ./mcp-server
+    restart: unless-stopped
+    environment:
+      PAPERHUB_API_URL: http://backend:8000
+      PAPERHUB_API_KEY: ${PAPERHUB_API_KEY:-}
+    depends_on:
+      - backend
+    # stdio 模式的 MCP Server 由 Open WebUI 直接拉起；这里以可执行容器方式提供
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    restart: unless-stopped
+    volumes:
+      - open_webui_data:/app/backend/data
+    ports:
+      - "8080:8080"
+    environment:
+      OPENAI_API_BASE_URL: ${OPENAI_BASE_URL:-https://api.deepseek.com}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # 通过 Open WebUI 的 Settings -> Connections 配置 MCP Server：
+      # command: uv run python /app/mcp-server/server.py (stdio)
+    depends_on:
+      - backend
+
+  # MinerU 本地服务（可选）。默认使用远程 MinerU API 或 Mock。
+  # mineru:
+  #   image: opendatalab/mineru:latest
+  #   restart: unless-stopped
+  #   ports:
+  #     - "30000:30000"
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+
+volumes:
+  postgres_data:
+  minio_data:
+  open_webui_data:

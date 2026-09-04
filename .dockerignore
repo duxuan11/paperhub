@@ -1,0 +1,13 @@
+.git
+.env
+data
+demo
+models
+**/node_modules
+**/.next
+**/.venv
+**/__pycache__
+*.log
+frontend
+cli
+mcp-server

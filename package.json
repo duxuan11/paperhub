@@ -1,0 +1,22 @@
+{
+  "name": "paperhub",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PaperHub 一键启动：npm run dev 起前端，npm run server 起后端 + 分析 Worker",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "frontend": "npm --prefix frontend run dev",
+    "server": "concurrently -k -n backend,worker -c cyan,green \"cd backend && uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000\" \"cd backend && uv run arq app.workers.main.WorkerSettings\"",
+    "backend": "cd backend && uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
+    "worker": "cd backend && uv run arq app.workers.main.WorkerSettings",
+    "mcp": "cd mcp-server && uv run python server.py",
+    "test": "cd backend && uv run pytest -q",
+    "build": "npm --prefix frontend run build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
