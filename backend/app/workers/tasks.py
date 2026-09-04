@@ -14,11 +14,19 @@ from app.core.minio import storage
 from app.services import article as article_service
 from app.services import chat
 from app.services import paper as paper_service
+from app.services.figures import group_figure_numbers, parse_figure_refs
 from app.services.llm import get_llm_service
 from app.services.mineru import get_mineru_service
 from app.services.skill import load_skill
 from app.services.wechat import build_article_payload, get_publisher
-from app.services.yolo import get_figure_service
+from app.services.yolo import (
+    HeuristicFigureService,
+    RENDER_ZOOM,
+    UltralyticsYoloService,
+    crop_page_png,
+    get_figure_service,
+    render_pdf_pages,
+)
 
 log = get_logger("tasks")
 
@@ -124,21 +132,33 @@ async def detect_figures(ctx: dict, paper_id: str, job_id: str) -> dict:
         if not keys:
             keys = [o for o in storage.list_objects(f"{paper_id}/") if "/images/" in o]
         await _set_job(job_id, progress=30)
+
+        pdf_data = await _read_pdf_bytes(paper_id)
         service = get_figure_service()
-        items = [(k, _page_from_key(k)) for k in sorted(keys)]
-        detected = await service.detect(items)
+
+        figs: list[dict] = []
+        source = "md"
+        if isinstance(service, UltralyticsYoloService) and pdf_data:
+            try:
+                figs, source = await _detect_figures_on_pages(
+                    service, paper_id, pdf_data
+                )
+            except Exception as e:  # noqa: BLE001
+                log.warning("YOLO 整页检测失败，回退 md: %s", e)
+                figs, source = [], "md"
+
+        if not figs:
+            items, captions = await _ordered_figure_items(paper_id, keys)
+            fallback_service = (
+                HeuristicFigureService()
+                if isinstance(service, UltralyticsYoloService)
+                else service
+            )
+            detected = await fallback_service.detect(items)
+            figs = _build_md_figs(detected, captions)
+            source = "md"
+
         await _set_job(job_id, progress=80)
-        figs = [
-            {
-                "figure_number": i,
-                "image_path": d.image_path,
-                "caption": d.caption,
-                "bbox": d.bbox,
-                "type": d.type,
-                "page": d.page,
-            }
-            for i, d in enumerate(detected, start=1)
-        ]
         async with async_session_factory() as session:
             await paper_service.add_figures(session, paper_id, figs)
         await _set_job(
@@ -150,9 +170,16 @@ async def detect_figures(ctx: dict, paper_id: str, job_id: str) -> dict:
             paper_id=paper_id,
             job_id=job_id,
             task="detect_figures",
+            source=source,
+            figures=len(figs),
             duration=round(time.perf_counter() - t0, 3),
         )
-        return {"paper_id": paper_id, "status": "success", "figures": len(figs)}
+        return {
+            "paper_id": paper_id,
+            "status": "success",
+            "figures": len(figs),
+            "source": source,
+        }
     except Exception as e:  # noqa: BLE001
         await _set_job(
             job_id, status=models.JobStatus.FAILED, error=str(e), finish=True
@@ -168,6 +195,100 @@ async def detect_figures(ctx: dict, paper_id: str, job_id: str) -> dict:
             error=str(e),
         )
         return {"paper_id": paper_id, "status": "failed", "error": str(e)}
+
+
+async def _read_pdf_bytes(paper_id: str) -> bytes | None:
+    async with async_session_factory() as session:
+        paper = await repositories.get_paper(session, paper_id)
+        if not paper or not paper.pdf_path:
+            return None
+        return storage.get_bytes(paper.pdf_path)
+
+
+async def _detect_figures_on_pages(
+    service: UltralyticsYoloService,
+    paper_id: str,
+    pdf_data: bytes,
+) -> tuple[list[dict], str]:
+    """整页渲染 + YOLO 检测 Figure；检不到则返回空（由调用方回退 md）。"""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        pages = render_pdf_pages(pdf_data, td)
+        detections = await service.detect_pages(pages)
+
+    figs: list[dict] = []
+    for i, d in enumerate(detections, start=1):
+        if not d.bbox:
+            continue
+        bbox_pdf = [round(v / RENDER_ZOOM, 2) for v in d.bbox]
+        png = crop_page_png(pdf_data, (d.page or 1) - 1, bbox_pdf)
+        name = f"page{d.page}_fig{i}.png"
+        key = f"{paper_id}/figures/{name}"
+        storage.put_bytes(key, png, "image/png")
+        figs.append(
+            {
+                "figure_number": i,
+                "image_path": key,
+                "caption": None,
+                "bbox": bbox_pdf,
+                "type": d.type,
+                "page": d.page,
+            }
+        )
+    return figs, "yolo"
+
+
+def _build_md_figs(detected: list, captions: dict[str, str]) -> list[dict]:
+    """把 markdown 顺序检测出的图转成 DB 行（同图注子图共享编号）。"""
+    caption_seq = [
+        captions.get(d.image_path) or d.caption or f"Figure {i}"
+        for i, d in enumerate(detected, start=1)
+    ]
+    numbers = group_figure_numbers(caption_seq)
+    return [
+        {
+            "figure_number": numbers[i - 1],
+            "image_path": d.image_path,
+            "caption": caption_seq[i - 1],
+            "bbox": d.bbox,
+            "type": d.type,
+            "page": d.page,
+        }
+        for i, d in enumerate(detected, start=1)
+    ]
+
+
+async def _ordered_figure_items(
+    paper_id: str, keys: list[str]
+) -> tuple[list[tuple[str, int | None]], dict[str, str]]:
+    """按 markdown 中图片出现顺序返回 (object_key, page) 列表与图注映射。
+
+    未在 markdown 中被引用的图片（多为 MinerU 冗余子图）不纳入 Figure；
+    markdown 无图片引用时回退为旧的存储顺序枚举。
+    """
+    md = ""
+    async with async_session_factory() as session:
+        paper = await repositories.get_paper(session, paper_id)
+        if paper and paper.markdown_path:
+            raw = storage.get_bytes(paper.markdown_path)
+            if raw:
+                md = raw.decode("utf-8", errors="ignore")
+
+    key_by_basename = {k.rsplit("/", 1)[-1]: k for k in keys}
+    captions: dict[str, str] = {}
+    items: list[tuple[str, int | None]] = []
+    if md:
+        for ref in parse_figure_refs(md):
+            key = key_by_basename.get(ref["image"])
+            if not key:
+                continue
+            items.append((key, _page_from_key(key)))
+            if ref.get("caption"):
+                captions[key] = ref["caption"]
+    if not items:
+        items = [(k, _page_from_key(k)) for k in sorted(keys)]
+    return items, captions
 
 
 def _page_from_key(key: str) -> int | None:
