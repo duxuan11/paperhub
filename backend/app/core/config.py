@@ -6,8 +6,22 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# 仓库根目录（backend/app/core/config.py -> 上溯三级）
-ROOT = Path(__file__).resolve().parents[3]
+def _detect_root() -> Path:
+    """定位仓库根目录，兼容原生与 Docker 两种布局。
+
+    原生布局:  <root>/backend/app/core/config.py  -> <root> = parents[3]
+    Docker 布局: <root>/app/core/config.py        -> <root> = parents[2]
+    以包含 skills/ 目录的最近父级为判定依据（两种布局下均存在）。
+    """
+    here = Path(__file__).resolve()
+    for parent in (here.parents[2], here.parents[3]):
+        if (parent / "skills").is_dir():
+            return parent
+    return here.parents[3]
+
+
+# 仓库根目录
+ROOT = _detect_root()
 
 # 确保仓库根目录在 sys.path，使 publishers / skills 等顶层包可被导入
 if str(ROOT) not in sys.path:

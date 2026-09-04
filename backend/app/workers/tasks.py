@@ -22,7 +22,7 @@ from app.services.wechat import build_article_payload, get_publisher
 from app.services.yolo import (
     HeuristicFigureService,
     RENDER_ZOOM,
-    UltralyticsYoloService,
+    OnnxYoloService,
     crop_page_png,
     get_figure_service,
     render_pdf_pages,
@@ -138,7 +138,7 @@ async def detect_figures(ctx: dict, paper_id: str, job_id: str) -> dict:
 
         figs: list[dict] = []
         source = "md"
-        if isinstance(service, UltralyticsYoloService) and pdf_data:
+        if isinstance(service, OnnxYoloService) and pdf_data:
             try:
                 figs, source = await _detect_figures_on_pages(
                     service, paper_id, pdf_data
@@ -151,7 +151,7 @@ async def detect_figures(ctx: dict, paper_id: str, job_id: str) -> dict:
             items, captions = await _ordered_figure_items(paper_id, keys)
             fallback_service = (
                 HeuristicFigureService()
-                if isinstance(service, UltralyticsYoloService)
+                if isinstance(service, OnnxYoloService)
                 else service
             )
             detected = await fallback_service.detect(items)
@@ -206,7 +206,7 @@ async def _read_pdf_bytes(paper_id: str) -> bytes | None:
 
 
 async def _detect_figures_on_pages(
-    service: UltralyticsYoloService,
+    service: OnnxYoloService,
     paper_id: str,
     pdf_data: bytes,
 ) -> tuple[list[dict], str]:
