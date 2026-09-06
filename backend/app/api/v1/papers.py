@@ -20,6 +20,7 @@ from app.schemas import (
     TaskEnqueueOut,
 )
 from app.services import paper as paper_service
+from app.services.figures import match_figures_to_markdown
 from app.workers import enqueue
 
 router = APIRouter(
@@ -108,7 +109,11 @@ async def get_paper_markdown(
     data = storage.get_bytes(paper.markdown_path)
     if not data:
         raise HTTPException(status_code=404, detail="Markdown 内容读取失败")
-    return {"paper_id": paper_id, "markdown": data.decode("utf-8", errors="ignore")}
+    figures = await repositories.list_figures(session, paper_id)
+    md_text = match_figures_to_markdown(
+        data.decode("utf-8", errors="ignore"), figures
+    )
+    return {"paper_id": paper_id, "markdown": md_text}
 
 
 @router.get("/{paper_id}/figures", response_model=list[FigureOut])

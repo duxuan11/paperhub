@@ -210,33 +210,55 @@ async def _detect_figures_on_pages(
     paper_id: str,
     pdf_data: bytes,
 ) -> tuple[list[dict], str]:
-    """整页渲染 + YOLO 检测 Figure；检不到则返回空（由调用方回退 md）。"""
+    """整页渲染 + YOLO 检测 Figure；检不到则返回空（由调用方回退 md）。
+
+    每个框通过 PDF 文字层匹配附近图注（Fig. N / Figure N / 图N），
+    用论文真实编号为 figure_number 并回填图注；匹配不到则按检测顺序编号。
+    """
     import tempfile
 
     with tempfile.TemporaryDirectory() as td:
         pages = render_pdf_pages(pdf_data, td)
         detections = await service.detect_pages(pages)
 
-    figs: list[dict] = []
-    for i, d in enumerate(detections, start=1):
-        if not d.bbox:
-            continue
-        bbox_pdf = [round(v / RENDER_ZOOM, 2) for v in d.bbox]
-        png = crop_page_png(pdf_data, (d.page or 1) - 1, bbox_pdf)
-        name = f"page{d.page}_fig{i}.png"
-        key = f"{paper_id}/figures/{name}"
-        storage.put_bytes(key, png, "image/png")
-        figs.append(
-            {
-                "figure_number": i,
-                "image_path": key,
-                "caption": None,
-                "bbox": bbox_pdf,
-                "type": d.type,
-                "page": d.page,
-            }
-        )
-    return figs, "yolo"
+    import fitz
+
+    from app.services.figures import extract_caption, text_lines_from_words
+
+    doc = fitz.open(stream=pdf_data, filetype="pdf")
+    lines_by_page: dict[int, list[tuple]] = {}
+    try:
+        figs: list[dict] = []
+        for i, d in enumerate(detections, start=1):
+            if not d.bbox:
+                continue
+            bbox_pdf = [round(v / RENDER_ZOOM, 2) for v in d.bbox]
+            page_no = d.page or 1
+            if page_no not in lines_by_page:
+                lines_by_page[page_no] = text_lines_from_words(
+                    doc[page_no - 1].get_text("words")
+                )
+            number, caption = extract_caption(lines_by_page[page_no], bbox_pdf)
+            # 只保留正文 figure：能锚定到 Fig. N 图注的检测；封面/期刊图等不收录
+            if number is None:
+                continue
+            png = crop_page_png(pdf_data, page_no - 1, bbox_pdf)
+            name = f"page{page_no}_fig{i}.png"
+            key = f"{paper_id}/figures/{name}"
+            storage.put_bytes(key, png, "image/png")
+            figs.append(
+                {
+                    "figure_number": number,
+                    "image_path": key,
+                    "caption": caption,
+                    "bbox": bbox_pdf,
+                    "type": d.type,
+                    "page": page_no,
+                }
+            )
+        return figs, "yolo"
+    finally:
+        doc.close()
 
 
 def _build_md_figs(detected: list, captions: dict[str, str]) -> list[dict]:

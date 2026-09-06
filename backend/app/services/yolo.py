@@ -98,6 +98,18 @@ class HeuristicFigureService(FigureDetectionService):
         return out
 
 
+def _iou(a: list[float], b: list[float]) -> float:
+    """两个 [x1, y1, x2, y2] 框的交并比。"""
+    ix = max(a[0], b[0]), min(a[2], b[2])
+    iy = max(a[1], b[1]), min(a[3], b[3])
+    inter = max(0.0, ix[1] - ix[0]) * max(0.0, iy[1] - iy[0])
+    if inter <= 0:
+        return 0.0
+    area_a = (a[2] - a[0]) * (a[3] - a[1])
+    area_b = (b[2] - b[0]) * (b[3] - b[1])
+    return inter / (area_a + area_b - inter)
+
+
 def _parse_names(raw) -> dict[int, str]:
     """从 ONNX 元数据解析类别名（兼容 JSON 与 Python dict repr）。"""
     if not raw:
@@ -118,10 +130,14 @@ def _parse_names(raw) -> dict[int, str]:
 
 
 class OnnxYoloService(FigureDetectionService):
-    """用 onnxruntime 直接推理 YOLO 导出的 ONNX 模型（end2end，输出已含 NMS）。
+    """用 onnxruntime 直接推理 YOLO 导出的 ONNX 模型。
 
     无需 ultralytics / torch。模型输入为 [1, 3, H, W] 的 float32 RGB 张量
-    （0~1），输出为 [1, N, 6] = [x1, y1, x2, y2, conf, cls]（letterbox 坐标）。
+    （0~1）。输出兼容两种布局（letterbox 坐标）：
+    - end2end： [1, N, 6] = [x1, y1, x2, y2, conf, cls]（已 NMS）；
+    - 原始头部：[1, C, A]（如 [1, 84, 8400]），C = 4 + nc（无 obj）或
+      5 + nc（含 obj，idx 4 为 obj conf），A 为锚点数；
+      cx/cy/w/h + 各类得分，需自行解码并做 NMS。
     只保留 figure 类别且置信度 >= conf_threshold 的框。
     """
 
@@ -175,30 +191,85 @@ class OnnxYoloService(FigureDetectionService):
         img = np.ascontiguousarray(img, dtype=np.float32) / 255.0
         return img[None]
 
+    def _decode_output(self, output) -> list[tuple]:
+        """把模型输出解码为 (x1, y1, x2, y2, conf, cls_id)（letterbox 坐标）。"""
+        import numpy as np
+
+        data = np.asarray(output)
+        if data.ndim == 3 and data.shape[-1] == 6:
+            return [
+                (
+                    float(row[0]),
+                    float(row[1]),
+                    float(row[2]),
+                    float(row[3]),
+                    float(row[4]),
+                    int(row[5]),
+                )
+                for row in data[0]
+            ]
+        if data.ndim < 2 or data.size == 0:
+            return []
+        data = data[0]
+        if data.shape[0] < data.shape[1]:  # [C, A] -> [A, C]
+            data = data.T
+        n_cls = len(self._names) or max(1, data.shape[1] - 4)
+        has_obj = bool(len(self._names)) and data.shape[1] == 5 + n_cls
+        cls_start = 5 if has_obj else 4
+        out: list[tuple] = []
+        for row in data:
+            vals = row.tolist()
+            if len(vals) <= cls_start:
+                continue
+            class_scores = vals[cls_start:]
+            cls_id = int(np.argmax(class_scores))
+            conf = float(class_scores[cls_id])
+            if has_obj:
+                conf *= float(vals[4])
+            cx, cy, w, h = vals[0], vals[1], vals[2], vals[3]
+            out.append(
+                (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2, conf, cls_id)
+            )
+        return out
+
     def _postprocess(
         self, output, orig_h: int, orig_w: int
     ) -> list[list[float]]:
-        """把 letterbox 坐标映射回原图，过滤类别与置信度。"""
+        """把 letterbox 坐标映射回原图，过滤类别与置信度并去重。"""
         r = min(self._input_w / orig_w, self._input_h / orig_h)
         pad_x = (self._input_w - orig_w * r) / 2
         pad_y = (self._input_h - orig_h * r) / 2
-        out: list[list[float]] = []
-        for row in output[0]:
-            x1, y1, x2, y2, conf, cls_id = (float(v) for v in row)
+        boxes: list[list[float]] = []
+        for x1, y1, x2, y2, conf, cls_id in self._decode_output(output):
             if conf < self.conf_threshold:
                 continue
-            name = self._names.get(int(cls_id), "figure")
+            name = self._names.get(cls_id, "figure")
             if name != "figure":
                 continue
-            out.append(
-                [
-                    (x1 - pad_x) / r,
-                    (y1 - pad_y) / r,
-                    (x2 - pad_x) / r,
-                    (y2 - pad_y) / r,
-                ]
-            )
-        return out
+            bx1 = min(max((x1 - pad_x) / r, 0.0), float(orig_w))
+            by1 = min(max((y1 - pad_y) / r, 0.0), float(orig_h))
+            bx2 = min(max((x2 - pad_x) / r, 0.0), float(orig_w))
+            by2 = min(max((y2 - pad_y) / r, 0.0), float(orig_h))
+            if bx2 - bx1 < 1 or by2 - by1 < 1:
+                continue
+            boxes.append([bx1, by1, bx2, by2])
+        return self._nms(boxes)
+
+    @staticmethod
+    def _nms(boxes: list[list[float]], iou_threshold: float = 0.5) -> list[list[float]]:
+        """对解码后的框做贪心 NMS（原始 YOLO 头部未自带 NMS）。"""
+        keep: list[list[float]] = []
+        for b in sorted(
+            boxes, key=lambda x: -((x[2] - x[0]) * (x[3] - x[1]))
+        ):
+            suppressed = False
+            for k in keep:
+                if _iou(b, k) > iou_threshold:
+                    suppressed = True
+                    break
+            if not suppressed:
+                keep.append(b)
+        return keep
 
     async def _detect_bgr(self, img_bgr, loop) -> list[list[float]]:
         import numpy as np
