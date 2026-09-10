@@ -160,16 +160,38 @@ def generate_wechat(
 
 @app.command()
 def publish_wechat(paper_id: str):
-    """将论文最新文章发送到微信公众号草稿箱。"""
+    """将论文最新文章发送到微信公众号草稿箱（等待并报告真实结果）。"""
     with client() as c:
         arts = c.get("/api/v1/articles", params={"paper_id": paper_id}).json()
         if not arts:
             console.print("[red]未找到文章，请先 generate-wechat[/red]")
             raise typer.Exit(1)
-        r = c.post("/api/v1/wechat/draft", json={"article_id": arts[0]["id"]})
+        article_id = arts[0]["id"]
+        r = c.post("/api/v1/wechat/draft", json={"article_id": article_id})
         r.raise_for_status()
         d = r.json()
-    console.print(f"[green]已提交草稿箱任务[/green] record_id={d['record_id']}")
+        record_id = d["record_id"]
+        if d.get("mock"):
+            console.print(
+                "[yellow]Mock 模式：未配置 WECHAT_APP_ID / WECHAT_APP_SECRET，"
+                "不会真的发送到公众号[/yellow]"
+            )
+        console.print(f"已提交草稿箱任务 record_id={record_id[:8]}，等待结果...")
+        start = time.time()
+        rec: dict = {}
+        while time.time() - start < 120:
+            recs = c.get(
+                "/api/v1/wechat/records", params={"article_id": article_id, "limit": 5}
+            ).json()
+            rec = next((x for x in recs if x["id"] == record_id), {})
+            if rec.get("status") in ("SUCCESS", "FAILED"):
+                break
+            time.sleep(1)
+    if rec.get("status") == "SUCCESS":
+        console.print(f"[green]已发送到公众号草稿箱[/green] media_id={rec.get('external_id')}")
+    else:
+        console.print(f"[red]推送失败: {rec.get('error') or '任务仍在执行'}[/red]")
+        raise typer.Exit(1)
 
 
 @app.command()

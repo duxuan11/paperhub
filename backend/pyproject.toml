@@ -2,7 +2,7 @@
 name = "paperhub-backend"
 version = "0.1.0"
 description = "PaperHub MVP backend"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -28,17 +28,9 @@ dev = [
 
 [project.optional-dependencies]
 yolo = [
-    "ultralytics>=8.3.0",
+    "onnxruntime>=1.18",
+    "opencv-python-headless>=4.9",
 ]
-
-[tool.uv.sources]
-torch = { index = "pytorch-cpu" }
-torchvision = { index = "pytorch-cpu" }
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
 
 [tool.uv]
 package = false

@@ -98,66 +98,159 @@ class HeuristicFigureService(FigureDetectionService):
         return out
 
 
-class UltralyticsYoloService(FigureDetectionService):
-    """真实 YOLO 检测（需要 ultralytics + 权重文件）。"""
+def _parse_names(raw) -> dict[int, str]:
+    """从 ONNX 元数据解析类别名（兼容 JSON 与 Python dict repr）。"""
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return {int(k): str(v).strip().lower() for k, v in raw.items()}
+    import ast
+    import json
 
-    def __init__(self, model_path: str) -> None:
+    for parser in (json.loads, ast.literal_eval):
+        try:
+            data = parser(raw)
+            if isinstance(data, dict):
+                return {int(k): str(v).strip().lower() for k, v in data.items()}
+        except Exception:  # noqa: BLE001
+            continue
+    return {}
+
+
+class OnnxYoloService(FigureDetectionService):
+    """用 onnxruntime 直接推理 YOLO 导出的 ONNX 模型（end2end，输出已含 NMS）。
+
+    无需 ultralytics / torch。模型输入为 [1, 3, H, W] 的 float32 RGB 张量
+    （0~1），输出为 [1, N, 6] = [x1, y1, x2, y2, conf, cls]（letterbox 坐标）。
+    只保留 figure 类别且置信度 >= conf_threshold 的框。
+    """
+
+    def __init__(self, model_path: str, conf_threshold: float = 0.25) -> None:
         self.model_path = model_path
-        self._model = None
+        self.conf_threshold = conf_threshold
+        self._session = None
+        self._input_name = "images"
+        self._input_h = 1024
+        self._input_w = 1024
+        self._names: dict[int, str] = {}
 
     def _load(self):
-        if self._model is None:
+        if self._session is None:
             try:
-                from ultralytics import YOLO
+                import onnxruntime as ort
             except ImportError as e:
                 raise RuntimeError(
-                    "未安装 ultralytics，请 pip install ultralytics"
+                    "未安装 onnxruntime，请安装 onnxruntime>=1.18"
                 ) from e
-            self._model = YOLO(self.model_path)
-        return self._model
+            self._session = ort.InferenceSession(
+                self.model_path, providers=["CPUExecutionProvider"]
+            )
+            inp = self._session.get_inputs()[0]
+            self._input_name = inp.name
+            shape = inp.shape
+            try:
+                self._input_h, self._input_w = int(shape[2]), int(shape[3])
+            except (TypeError, ValueError, IndexError):
+                self._input_h = self._input_w = 1024
+            meta = self._session.get_modelmeta()
+            self._names = _parse_names(meta.custom_metadata_map.get("names"))
+        return self._session
+
+    def _preprocess(self, img_bgr):
+        """letterbox 到模型输入尺寸，并转为 [1,3,H,W] float32 RGB (0~1)。"""
+        import cv2
+        import numpy as np
+
+        h, w = img_bgr.shape[:2]
+        r = min(self._input_w / w, self._input_h / h)
+        new_w, new_h = int(round(w * r)), int(round(h * r))
+        img = cv2.resize(img_bgr, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        dw, dh = self._input_w - new_w, self._input_h - new_h
+        top, bottom = int(round(dh / 2 - 0.1)), int(round(dh / 2 + 0.1))
+        left, right = int(round(dw / 2 - 0.1)), int(round(dw / 2 + 0.1))
+        img = cv2.copyMakeBorder(
+            img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(114, 114, 114)
+        )
+        img = img[..., ::-1].transpose((2, 0, 1))  # BGR -> RGB, HWC -> CHW
+        img = np.ascontiguousarray(img, dtype=np.float32) / 255.0
+        return img[None]
+
+    def _postprocess(
+        self, output, orig_h: int, orig_w: int
+    ) -> list[list[float]]:
+        """把 letterbox 坐标映射回原图，过滤类别与置信度。"""
+        r = min(self._input_w / orig_w, self._input_h / orig_h)
+        pad_x = (self._input_w - orig_w * r) / 2
+        pad_y = (self._input_h - orig_h * r) / 2
+        out: list[list[float]] = []
+        for row in output[0]:
+            x1, y1, x2, y2, conf, cls_id = (float(v) for v in row)
+            if conf < self.conf_threshold:
+                continue
+            name = self._names.get(int(cls_id), "figure")
+            if name != "figure":
+                continue
+            out.append(
+                [
+                    (x1 - pad_x) / r,
+                    (y1 - pad_y) / r,
+                    (x2 - pad_x) / r,
+                    (y2 - pad_y) / r,
+                ]
+            )
+        return out
+
+    async def _detect_bgr(self, img_bgr, loop) -> list[list[float]]:
+        import numpy as np
+
+        tensor = self._preprocess(img_bgr)
+        h, w = img_bgr.shape[:2]
+        session = self._load()
+
+        def _run():
+            return session.run(None, {self._input_name: tensor})[0]
+
+        output = await loop.run_in_executor(None, _run)
+        return self._postprocess(np.asarray(output), h, w)
 
     async def detect_pages(
         self, pages: Sequence[tuple[str, int]]
     ) -> list[DetectedFigure]:
         """在整页渲染图上检测 Figure。
 
-        pages: [(本地 PNG 路径, 页码1-based), ...]。bbox 为渲染图坐标系
-        （像素），由调用方结合 zoom 换算为 PDF 坐标后裁剪保存。
+        pages: [(本地 PNG 路径, 页码1-based), ...]。bbox 为原图像素坐标系，
+        由调用方结合 zoom 换算为 PDF 坐标后裁剪保存。
         """
-        model = self._load()
-        names = getattr(model, "names", {})
-        out: list[DetectedFigure] = []
+        import cv2
+
+        self._load()
         loop = asyncio.get_event_loop()
+        out: list[DetectedFigure] = []
         for path, page in pages:
-            results = await loop.run_in_executor(None, model.predict, path)
-            best: tuple[float, int, list] | None = None
-            for r in results:
-                if r.boxes is None:
-                    continue
-                for box in r.boxes:
-                    conf = float(box.conf[0])
-                    if best is None or conf > best[0]:
-                        best = (conf, int(box.cls[0]), box.xyxy[0].tolist())
-            if best is None:
+            img_bgr = cv2.imread(path)
+            if img_bgr is None:
                 continue
-            _, cls_id, bbox = best
-            out.append(
-                DetectedFigure(
-                    name=f"page{page}_fig{len(out) + 1}",
-                    image_path="",
-                    type=names.get(cls_id, "figure"),
-                    bbox=bbox,
-                    page=page,
+            for bbox in await self._detect_bgr(img_bgr, loop):
+                out.append(
+                    DetectedFigure(
+                        name=f"page{page}_fig{len(out) + 1}",
+                        image_path="",
+                        type="figure",
+                        bbox=bbox,
+                        page=page,
+                    )
                 )
-            )
         return out
 
     async def detect(
         self, images: Sequence[tuple[str, int | None]]
     ) -> list[DetectedFigure]:
-        import io
+        """对 MinIO 中的图片逐张检测（兼容旧接口，当前主流程未使用）。"""
+        import cv2
+        import numpy as np
 
-        model = self._load()
+        self._load()
+        loop = asyncio.get_event_loop()
         out: list[DetectedFigure] = []
         for key, page in images:
             from app.core.minio import storage
@@ -165,26 +258,18 @@ class UltralyticsYoloService(FigureDetectionService):
             data = storage.get_bytes(key)
             if not data:
                 continue
-            loop = asyncio.get_event_loop()
-            results = await loop.run_in_executor(None, model.predict, io.BytesIO(data))
-            best = "figure"
-            bbox = None
-            for r in results:
-                if r.boxes is not None and len(r.boxes) > 0:
-                    cls_id = int(r.boxes.cls[0])
-                    best = (
-                        model.names.get(cls_id, "figure")
-                        if hasattr(model, "names")
-                        else "figure"
-                    )
-                    bbox = r.boxes.xyxy[0].tolist()
-                    break
-            name = key.rsplit("/", 1)[-1]
-            out.append(
-                DetectedFigure(
-                    name=name, image_path=key, type=best, bbox=bbox, page=page
-                )
+            img_bgr = cv2.imdecode(
+                np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR
             )
+            if img_bgr is None:
+                continue
+            name = key.rsplit("/", 1)[-1]
+            for bbox in await self._detect_bgr(img_bgr, loop):
+                out.append(
+                    DetectedFigure(
+                        name=name, image_path=key, type="figure", bbox=bbox, page=page
+                    )
+                )
         return out
 
 
@@ -197,5 +282,5 @@ def get_figure_service() -> FigureDetectionService:
         model_path = settings.yolo_model_path
         if not Path(model_path).is_absolute():
             model_path = str(ROOT / model_path)
-        return UltralyticsYoloService(model_path)
+        return OnnxYoloService(model_path)
     return HeuristicFigureService()
