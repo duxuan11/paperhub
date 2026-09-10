@@ -27,6 +27,16 @@ export async function apiPatch<T = any>(path: string, body?: any): Promise<T> {
   return r.json();
 }
 
+export async function apiPut<T = any>(path: string, body?: any): Promise<T> {
+  const r = await fetch(`${PROXY}${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) throw new Error(`请求失败 ${r.status}: ${await safeText(r)}`);
+  return r.json();
+}
+
 export async function apiUploadFiles(files: File[]): Promise<any[]> {
   const fd = new FormData();
   files.forEach((f) => fd.append("files", f));

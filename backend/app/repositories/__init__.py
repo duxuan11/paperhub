@@ -78,3 +78,18 @@ async def list_articles(
     if paper_id:
         stmt = stmt.where(models.Article.paper_id == paper_id)
     return (await session.scalars(stmt.limit(limit))).all()
+
+
+async def get_setting(session: AsyncSession, key: str) -> str | None:
+    row = await session.get(models.AppSetting, key)
+    return row.value if row else None
+
+
+async def set_setting(session: AsyncSession, key: str, value: str | None) -> None:
+    """写入或覆盖一个配置项（value 为 None/空串时视为清除）。"""
+    row = await session.get(models.AppSetting, key)
+    if row is None:
+        row = models.AppSetting(key=key)
+        session.add(row)
+    row.value = value
+    await session.commit()

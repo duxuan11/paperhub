@@ -157,7 +157,8 @@ async def analyze_paper(
     paper = await repositories.get_paper(session, paper_id)
     if not paper:
         raise HTTPException(status_code=404, detail="论文不存在")
-    skill = (req.skill if req else "paper-summary") or "paper-summary"
+    # 空则交由 analyze 任务读取设置页保存的默认 Skill
+    skill = (req.skill if req else "") or ""
     job = await repositories.create_job(session, paper_id, "analyze")
     await enqueue.enqueue("analyze_paper", paper_id, job.id, skill)
     return TaskEnqueueOut(job_id=job.id, paper_id=paper_id)
