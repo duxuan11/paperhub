@@ -203,9 +203,30 @@ MCP 工具：`search_papers` / `get_paper` / `get_paper_markdown` / `get_paper_m
 ```env
 WECHAT_APP_ID=your-appid
 WECHAT_APP_SECRET=your-secret
+# 可选：草稿封面用的永久素材 media_id（留空则自动上传首图/内置封面并缓存）
+WECHAT_THUMB_MEDIA_ID=
 ```
 
 填写后使用 `RealWeChatPublisher`（调用 `draft/add` 创建草稿）；未配置使用 Mock 记录。
+
+### 真实发送的前置条件（缺一不可）
+
+1. **IP 白名单**：公众号后台 → 设置与开发 → 基本配置 → IP白名单，加入运行 Worker 的机器/主机的
+   **公网出口 IP**。未加白名单时微信返回 `errcode=40164 invalid ip ... not in whitelist`，
+   草稿箱里不会有任何内容（Docker 与原生共用宿主机出口 IP）。
+2. **接口权限**：账号需开通草稿箱与发布功能（未开通时报 `48001 / 53503 / 53504`）。
+3. **封面图**：图文草稿的 `thumb_media_id` 必填。PaperHub 会自动把文章首图（无配图时用内置渐变封面）
+   上传为永久素材并缓存到 Redis，也可用 `WECHAT_THUMB_MEDIA_ID` 指定已有素材。
+4. **正文图片**：正文中的 `{{figure:N}}` 会自动上传到微信（`media/uploadimg`）并替换为 mmbiz URL；
+   微信访问不到 localhost/MinIO 地址，跳过这一步图片不会显示。
+
+### 推送结果怎么看
+
+推送是异步任务：接口只负责入队，结果通过 `GET /api/v1/wechat/records?article_id=<id>` 查询。
+
+- 前端文章编辑器：提交后自动轮询，工具栏下方显示「上次推送 成功/失败 + 错误原因」。
+- CLI：`paperhub publish-wechat PAPER_ID` 会等待并打印真实结果（失败时退出码非 0）。
+- 「任务」页可看到 `publish_wechat` 任务的状态与 error。
 
 **安全设计**：默认只「发送到公众号草稿箱」，不直接发布；页面提供 [保存草稿] / [发送到草稿箱] / [发布] 三级操作，发布需公众号 API 权限。
 
@@ -261,7 +282,7 @@ GET    /files/{key}                   # 图片/文件代理
 GET    /health  /skills  /settings    # 元信息
 ```
 
-鉴权：设置 `PAPERHUB_API_KEY` 后，需携带 `Authorization: Bearer xxx`（CLI 用 `paperhub config set api-key xxx`）。留空则开发模式不鉴权。
+鉴权：设置 `PAPERHUB_API_KEY` 后，需携带 `Authorization: Bearer *** 用 `paperhub config set api-key xxx`）。留空则开发模式不鉴权。
 
 ## 论文状态机
 
@@ -298,8 +319,12 @@ cd mcp-server && uv sync && uv run python server.py
 **Q：上传后一直 PARSING？**
 检查 Worker 是否启动（`make worker`），以及 `docker compose logs -f worker` / `tail /tmp/paperhub-worker.log`。
 
-**Q：真实公众号发布失败？**
-默认只创建草稿；正式发布需公众号具备相应权限。错误会记录在 `publish_records` 与任务中。
+**Q：点了「发送到草稿箱 / 发布」公众号里什么都没有？**
+先看文章编辑器工具栏下方的「上次推送」或 `GET /api/v1/wechat/records?article_id=<id>` 的 `error`：
+- `errcode=40164 ... not in whitelist`：调用方公网出口 IP 未加入公众号 IP 白名单（最常见）。
+- `errcode=40007 invalid media_id`：封面素材非法，检查 `WECHAT_THUMB_MEDIA_ID`。
+- `errcode=48001 / 53503 / 53504`：账号未开通对应接口权限，或未认证。
+默认只创建草稿；正式发布（`freepublish/submit`）需要公众号具备发布权限。
 
 **Q：前端访问后端失败？**
 前端通过 `/api/proxy` 转发到 `BACKEND_URL`（默认 `http://localhost:8000`）。Docker 下已配置为 `http://backend:8000`。

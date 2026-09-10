@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
 import time
 from datetime import datetime, timezone
 
 from arq.connections import ArqRedis
 
 from app import models, repositories
+from app.core.config import settings
 from app.core.database import async_session_factory
 from app.core.logging import get_logger, log_event
 from app.core.minio import storage
+from app.core.redis import get_arq_pool
 from app.services import article as article_service
 from app.services import chat
 from app.services import paper as paper_service
@@ -27,6 +30,7 @@ from app.services.yolo import (
     get_figure_service,
     render_pdf_pages,
 )
+from publishers.wechat.cover import default_cover_png
 
 log = get_logger("tasks")
 
@@ -393,75 +397,225 @@ async def generate_wechat_article(
         return {"paper_id": paper_id, "status": "failed", "error": str(e)}
 
 
-async def publish_wechat_article(
-    ctx: dict, article_id: str, job_id: str, publish: bool = False
-) -> dict:
-    t0 = time.perf_counter()
-    await _set_job(job_id, start=True, progress=10)
+def _cover_source(images: list[str]) -> tuple[bytes, str]:
+    """选封面素材：优先文章首图，没有可用配图时用生成的渐变封面。"""
+    for key in images:
+        data = storage.get_bytes(key)
+        if data:
+            return data, key.rsplit("/", 1)[-1]
+    return default_cover_png(), "paperhub-default-cover.png"
+
+
+async def _upload_content_images(publisher, images: list[str]) -> dict[str, str]:
+    """把正文中的 {{figure:N}} 占位符映射为微信可访问的图片 URL。
+
+    正文图片必须先经 /cgi-bin/media/uploadimg 换成 mmbiz URL，
+    否则微信侧拿不到图（MinIO / localhost 地址微信无法访问）。
+    """
+    mapping: dict[str, str] = {}
+    for idx, key in enumerate(images):
+        data = storage.get_bytes(key)
+        if not data:
+            log.warning("正文图片读取失败，跳过: %s", key)
+            continue
+        try:
+            url = await publisher.upload_content_image(data, key.rsplit("/", 1)[-1])
+        except Exception as e:  # noqa: BLE001
+            log.warning("正文图片上传微信失败，跳过: %s (%s)", key, e)
+            continue
+        mapping[f"{{{{figure:{idx}}}}}"] = url
+    return mapping
+
+
+async def _ensure_thumb_media_id(publisher, images: list[str]) -> str:
+    """草稿封面 thumb_media_id（图文草稿必填，否则 draft/add 报 40007）。
+
+    优先使用配置的 WECHAT_THUMB_MEDIA_ID；否则上传文章首图（无配图则用默认封面）
+    作为永久素材，并把 media_id 缓存到 Redis，避免每次推送重复上传。
+    """
+    if settings.wechat_thumb_media_id:
+        return settings.wechat_thumb_media_id
+
+    data, filename = _cover_source(images)
+    cache_key = f"wechat:cover:{hashlib.sha1(data).hexdigest()[:16]}"
+    pool = None
     try:
+        pool = await get_arq_pool()
+        cached = await pool.get(cache_key)
+        if cached:
+            return cached.decode() if isinstance(cached, bytes) else str(cached)
+    except Exception as e:  # noqa: BLE001
+        log.warning("封面 media_id 缓存读取失败: %s", e)
+
+    media_id = await publisher.upload_cover(data, filename)
+    if pool is not None:
+        try:
+            await pool.set(cache_key, media_id)
+        except Exception as e:  # noqa: BLE001
+            log.warning("封面 media_id 缓存写入失败: %s", e)
+    return media_id
+
+
+async def _create_publish_record(article_id: str) -> str:
+    async with async_session_factory() as session:
+        rec = models.PublishRecord(
+            article_id=article_id,
+            platform="wechat",
+            status=models.PublishStatus.PENDING,
+        )
+        session.add(rec)
+        await session.commit()
+        await session.refresh(rec)
+        return rec.id
+
+
+async def _finish_publish_record(
+    record_id: str | None,
+    status: models.PublishStatus,
+    *,
+    external_id: str | None = None,
+    error: str | None = None,
+) -> None:
+    if not record_id:
+        return
+    async with async_session_factory() as session:
+        rec = await session.get(models.PublishRecord, record_id)
+        if not rec:
+            return
+        rec.status = status
+        rec.external_id = external_id
+        rec.error = error
+        rec.published_at = datetime.now(timezone.utc)
+        await session.commit()
+
+
+async def _set_article_status(article_id: str, status: models.ArticleStatus) -> None:
+    async with async_session_factory() as session:
+        art = await repositories.get_article(session, article_id)
+        if art:
+            art.status = status
+            await session.commit()
+
+
+async def _publish_failed(
+    job_id: str, error: str, article_id: str, paper_id: str | None, publisher, t0: float
+) -> dict:
+    await _set_job(
+        job_id, progress=100, status=models.JobStatus.FAILED, error=error, finish=True
+    )
+    log_event(
+        40,
+        "task_failed",
+        paper_id=paper_id,
+        job_id=job_id,
+        task="publish_wechat",
+        error=error,
+        duration=round(time.perf_counter() - t0, 3),
+    )
+    return {
+        "article_id": article_id,
+        "status": "failed",
+        "error": error,
+        "mock": publisher.is_mock(),
+    }
+
+
+async def publish_wechat_article(
+    ctx: dict,
+    article_id: str,
+    job_id: str,
+    publish: bool = False,
+    record_id: str | None = None,
+) -> dict:
+    """推送文章到公众号草稿箱（publish=True 时继续正式发布）。
+
+    record_id 由 API 层创建并传入；直接调用本任务（如重试）时可省略，
+    此时在本任务内补建一条发布记录。
+
+    注意：微信侧失败必须显式落到 job.error 与 publish_records.error。
+    以前这里无论草稿是否创建成功都把 job 标成 SUCCESS，导致前端提示"已发送"，
+    而公众号草稿箱里什么都没有，用户看不到任何失败原因。
+    """
+    t0 = time.perf_counter()
+    await _set_job(job_id, start=True, progress=5)
+    publisher = get_publisher()
+    paper_id: str | None = None
+    try:
+        if not record_id:
+            record_id = await _create_publish_record(article_id)
+
         async with async_session_factory() as session:
             art = await repositories.get_article(session, article_id)
             if not art:
-                raise ValueError(f"article not found: {article_id}")
-            publisher = get_publisher()
-            payload = build_article_payload(art.title or "未命名", art.content or "")
-            rec = models.PublishRecord(
-                article_id=article_id,
-                platform="wechat",
-                status=models.PublishStatus.PENDING,
-            )
-            session.add(rec)
-            await session.flush()
+                raise ValueError(f"文章不存在: {article_id}")
+            paper_id = art.paper_id
+            title = art.title or "未命名"
+            content = art.content or ""
+            images = list(art.images or [])
+            digest = art.summary or ""
 
-            draft = await publisher.create_draft(payload)
-            if draft.success:
-                if publish:
-                    pub = await publisher.publish(draft.external_id or "")
-                    rec.external_id = pub.external_id
-                    rec.status = (
-                        models.PublishStatus.SUCCESS
-                        if pub.success
-                        else models.PublishStatus.FAILED
-                    )
-                    rec.error = pub.error
-                    art.status = (
-                        models.ArticleStatus.PUBLISHED if pub.success else art.status
-                    )
-                else:
-                    rec.external_id = draft.external_id
-                    rec.status = models.PublishStatus.SUCCESS
-                    art.status = models.ArticleStatus.SENT_TO_PLATFORM
-                rec.published_at = datetime.now(timezone.utc)
-            else:
-                rec.status = models.PublishStatus.FAILED
-                rec.error = draft.error
-            await session.commit()
-        await _set_job(
-            job_id, progress=100, status=models.JobStatus.SUCCESS, finish=True
+        await _set_job(job_id, progress=20)
+        image_map = await _upload_content_images(publisher, images)
+        thumb_media_id = await _ensure_thumb_media_id(publisher, images)
+        payload = build_article_payload(
+            title, content, image_map, thumb_media_id=thumb_media_id, digest=digest
         )
+        await _set_job(job_id, progress=45)
+
+        draft = await publisher.create_draft(payload)
+        if not draft.success:
+            error = draft.error or "创建草稿失败"
+            await _finish_publish_record(
+                record_id, models.PublishStatus.FAILED, error=error
+            )
+            return await _publish_failed(job_id, error, article_id, paper_id, publisher, t0)
+
+        external_id = draft.external_id
+        error = None
+        if publish:
+            pub = await publisher.publish(external_id or "")
+            external_id = pub.external_id or external_id
+            if not pub.success:
+                error = pub.error or "发布失败"
+        await _set_job(job_id, progress=80)
+
+        if error:
+            await _finish_publish_record(
+                record_id,
+                models.PublishStatus.FAILED,
+                external_id=external_id,
+                error=error,
+            )
+            return await _publish_failed(job_id, error, article_id, paper_id, publisher, t0)
+
+        await _finish_publish_record(
+            record_id, models.PublishStatus.SUCCESS, external_id=external_id
+        )
+        await _set_article_status(
+            article_id,
+            models.ArticleStatus.PUBLISHED
+            if publish
+            else models.ArticleStatus.SENT_TO_PLATFORM,
+        )
+        await _set_job(job_id, progress=100, status=models.JobStatus.SUCCESS, finish=True)
         log_event(
             20,
             "task_done",
-            paper_id=art.paper_id,
+            paper_id=paper_id,
             job_id=job_id,
             task="publish_wechat",
+            publish=publish,
+            mock=publisher.is_mock(),
             duration=round(time.perf_counter() - t0, 3),
         )
         return {
             "article_id": article_id,
+            "record_id": record_id,
             "status": "success",
+            "external_id": external_id,
             "mock": publisher.is_mock(),
         }
     except Exception as e:  # noqa: BLE001
-        await _set_job(
-            job_id, status=models.JobStatus.FAILED, error=str(e), finish=True
-        )
-        log_event(
-            40,
-            "task_failed",
-            paper_id=None,
-            job_id=job_id,
-            task="publish_wechat",
-            error=str(e),
-        )
-        return {"article_id": article_id, "status": "failed", "error": str(e)}
+        error = str(e) or e.__class__.__name__
+        await _finish_publish_record(record_id, models.PublishStatus.FAILED, error=error)
+        return await _publish_failed(job_id, error, article_id, paper_id, publisher, t0)

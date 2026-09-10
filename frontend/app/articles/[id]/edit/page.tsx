@@ -4,8 +4,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { apiGet, apiPatch, apiPost, fileUrl } from "@/lib/api";
-import type { Article } from "@/lib/types";
+import type { Article, PublishRecord } from "@/lib/types";
 import { Markdown } from "@/components/Markdown";
+
+const REC_STATUS: Record<string, string> = {
+  PENDING: "推送中",
+  SUCCESS: "成功",
+  FAILED: "失败",
+};
 
 function extractOutline(md: string) {
   const items: { level: number; text: string }[] = [];
@@ -33,6 +39,9 @@ export default function ArticleEditorPage() {
   const [saving, setSaving] = useState(false);
   const [acting, setActing] = useState("");
   const [notice, setNotice] = useState("");
+  // 最近一次公众号推送记录：微信侧失败必须让用户看得见，而不是只弹一句"已发送"
+  const [lastRecord, setLastRecord] = useState<PublishRecord | null>(null);
+  const [mockMode, setMockMode] = useState(false);
 
   const load = useCallback(async () => {
     const a = await apiGet<Article>(`/articles/${id}`);
@@ -41,9 +50,21 @@ export default function ArticleEditorPage() {
     setContent(a.content || "");
   }, [id]);
 
+  const loadRecords = useCallback(async () => {
+    try {
+      const recs = await apiGet<PublishRecord[]>(
+        `/wechat/records?article_id=${id}&limit=1`
+      );
+      setLastRecord(recs[0] || null);
+    } catch {
+      // 记录接口不可用时不影响编辑
+    }
+  }, [id]);
+
   useEffect(() => {
     load();
-  }, [load]);
+    loadRecords();
+  }, [load, loadRecords]);
 
   const outline = useMemo(() => extractOutline(content), [content]);
   const preview = useMemo(
@@ -83,16 +104,58 @@ export default function ArticleEditorPage() {
     }
   }
 
+  /** 轮询发布记录，把微信侧的真实结果反馈给用户。 */
+  async function trackPublishResult(
+    recordId: string,
+    prevId: string | null,
+    publish: boolean
+  ) {
+    const action = publish ? "发布" : "发送草稿箱";
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 1500));
+      let recs: PublishRecord[] = [];
+      try {
+        recs = await apiGet<PublishRecord[]>(`/wechat/records?article_id=${id}&limit=5`);
+      } catch {
+        continue;
+      }
+      const rec =
+        recs.find((r) => r.id === recordId) ??
+        recs.find((r) => r.id !== prevId) ??
+        null;
+      if (!rec) continue;
+      setLastRecord(rec);
+      if (rec.status === "PENDING") continue;
+      if (rec.status === "SUCCESS") {
+        flash(publish ? "已发布到公众号" : "已发送到公众号草稿箱");
+      } else {
+        setNotice("");
+        alert(`${action}失败：\n${rec.error || "未知错误"}`);
+      }
+      return;
+    }
+    flash("任务仍在执行，请到「任务」页查看进度");
+  }
+
   async function sendDraft(publish: boolean) {
+    const label = publish ? "发布" : "发送草稿箱";
     setActing(publish ? "发布中" : "发送中");
     try {
-      await apiPost(publish ? "/wechat/publish" : "/wechat/draft", {
-        article_id: id,
-        publish,
-      });
-      flash(publish ? "已提交发布任务" : "已发送到公众号草稿箱");
+      const prevId = lastRecord?.id ?? null;
+      const res = await apiPost<{ record_id: string; mock: boolean }>(
+        publish ? "/wechat/publish" : "/wechat/draft",
+        { article_id: id, publish }
+      );
+      setMockMode(!!res.mock);
+      flash(
+        res.mock
+          ? "已入队：当前为 Mock 模式（未配置公众号凭据），不会真的发送"
+          : `${label}任务已提交，等待微信返回…`
+      );
+      // 不阻塞界面：后台轮询真实结果（成功/失败原因都会展示）
+      void trackPublishResult(res.record_id, prevId, publish);
     } catch (e) {
-      alert(`操作失败: ${e}`);
+      alert(`${label}失败: ${e}`);
     } finally {
       setActing("");
     }
@@ -106,6 +169,9 @@ export default function ArticleEditorPage() {
         </Link>
         <span className="text-[15px] font-semibold text-neutral-900">文章编辑器</span>
         {notice && <span className="text-[12px] text-emerald-600">{notice}</span>}
+        {mockMode && (
+          <span className="text-[12px] text-amber-600">Mock 模式（未配置公众号凭据）</span>
+        )}
         <span className="flex-1" />
         <button
           onClick={() => runAction("polish", "润色")}
@@ -147,16 +213,45 @@ export default function ArticleEditorPage() {
           disabled={!!acting}
           className="px-3 py-1.5 rounded-lg bg-brand-600 text-white text-[12px] hover:bg-brand-700"
         >
-          发送到草稿箱
+          {acting === "发送中" ? "…" : "发送到草稿箱"}
         </button>
         <button
           onClick={() => sendDraft(true)}
           disabled={!!acting}
           className="px-3 py-1.5 rounded-lg bg-neutral-900 text-white text-[12px] hover:bg-neutral-700"
         >
-          发布
+          {acting === "发布中" ? "…" : "发布"}
         </button>
       </div>
+
+      {(lastRecord || mockMode) && (
+        <div className="px-6 py-2 bg-neutral-50 border-b border-neutral-200 text-[12px] flex items-center gap-2 shrink-0">
+          {lastRecord && (
+            <>
+              <span className="text-neutral-400">上次推送</span>
+              <span
+                className={
+                  lastRecord.status === "FAILED"
+                    ? "text-red-600"
+                    : lastRecord.status === "SUCCESS"
+                    ? "text-emerald-600"
+                    : "text-neutral-500"
+                }
+              >
+                {REC_STATUS[lastRecord.status] || lastRecord.status}
+              </span>
+              {lastRecord.external_id && (
+                <span className="text-neutral-400">id={lastRecord.external_id}</span>
+              )}
+              {lastRecord.error && (
+                <span className="text-red-500 truncate max-w-[60vw]" title={lastRecord.error}>
+                  {lastRecord.error}
+                </span>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       <div className="flex-1 flex min-h-0">
         <aside className="w-52 shrink-0 border-r border-neutral-200 bg-white overflow-y-auto">

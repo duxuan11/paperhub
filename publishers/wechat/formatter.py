@@ -103,7 +103,8 @@ def markdown_to_wechat_html(md: str, image_map: dict[str, str] | None = None) ->
                 out.append("<ol>")
                 in_list = True
                 list_tag = "ol"
-            out.append(f"<li>{_inline(re.sub(r'^\d+\.\s', '', stripped))}</li>")
+            item = re.sub(r"^\d+\.\s", "", stripped)
+            out.append(f"<li>{_inline(item)}</li>")
         elif stripped.startswith("---"):
             close_list()
             out.append("<hr>")
@@ -114,4 +115,10 @@ def markdown_to_wechat_html(md: str, image_map: dict[str, str] | None = None) ->
     close_list()
     if in_code:
         out.append("</pre>")
-    return "\n".join(out)
+    html_out = "\n".join(out)
+    # 兜底：未被 markdown 图片语法包起来的 {{figure:N}} 占位符也要替换掉，
+    # 否则会把字面量 "{{figure:0}}" 发到公众号正文里。
+    for placeholder, url in image_map.items():
+        if placeholder in html_out:
+            html_out = html_out.replace(placeholder, url)
+    return html_out

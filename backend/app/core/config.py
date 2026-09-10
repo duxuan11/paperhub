@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     # 微信公众号
     wechat_app_id: str = ""
     wechat_app_secret: str = ""
+    # 草稿封面用的永久素材 media_id（留空则自动上传文章首图/默认封面并缓存）
+    wechat_thumb_media_id: str = ""
 
     # 自身鉴权
     paperhub_api_key: str = ""
