@@ -7,6 +7,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import models, repositories, schemas
+from app.api.v1.guards import ensure_no_active_job
 from app.core.database import get_session
 from app.core.minio import storage
 from app.core.security import require_auth
@@ -133,6 +134,7 @@ async def reparse_paper(paper_id: str, session: AsyncSession = Depends(get_sessi
     paper = await repositories.get_paper(session, paper_id)
     if not paper:
         raise HTTPException(status_code=404, detail="论文不存在")
+    await ensure_no_active_job(session, paper_id, "parse", "解析")
     job = await repositories.create_job(session, paper_id, "parse")
     await enqueue.enqueue("parse_paper", paper_id, job.id)
     return TaskEnqueueOut(job_id=job.id, paper_id=paper_id)
@@ -143,6 +145,7 @@ async def detect_figures(paper_id: str, session: AsyncSession = Depends(get_sess
     paper = await repositories.get_paper(session, paper_id)
     if not paper:
         raise HTTPException(status_code=404, detail="论文不存在")
+    await ensure_no_active_job(session, paper_id, "detect_figures", "检测")
     job = await repositories.create_job(session, paper_id, "detect_figures")
     await enqueue.enqueue("detect_figures", paper_id, job.id)
     return TaskEnqueueOut(job_id=job.id, paper_id=paper_id)
@@ -157,6 +160,7 @@ async def analyze_paper(
     paper = await repositories.get_paper(session, paper_id)
     if not paper:
         raise HTTPException(status_code=404, detail="论文不存在")
+    await ensure_no_active_job(session, paper_id, "analyze", "分析")
     # 空则交由 analyze 任务读取设置页保存的默认 Skill
     skill = (req.skill if req else "") or ""
     job = await repositories.create_job(session, paper_id, "analyze")
@@ -173,6 +177,7 @@ async def generate_wechat(
     paper = await repositories.get_paper(session, paper_id)
     if not paper:
         raise HTTPException(status_code=404, detail="论文不存在")
+    await ensure_no_active_job(session, paper_id, "generate_wechat", "生成公众号文章")
     skill = (req.skill if req else "wechat-article") or "wechat-article"
     style = (req.style if req else "科研论文解读") or "科研论文解读"
     job = await repositories.create_job(session, paper_id, "generate_wechat")

@@ -117,9 +117,21 @@ services:
     environment:
       PAPERHUB_API_URL: http://backend:8000
       PAPERHUB_API_KEY: ${PAPERHUB_API_KEY:-}
+      # 常驻服务模式：以 Streamable HTTP 监听，供 Open WebUI / 其他 MCP 客户端通过 URL 连接
+      MCP_TRANSPORT: streamable-http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8001
+      MCP_PATH: /mcp
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,urllib.error\ntry:\n urllib.request.urlopen('http://127.0.0.1:8001/mcp', timeout=3)\nexcept urllib.error.HTTPError:\n pass\nexcept Exception:\n raise SystemExit(1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     depends_on:
       - backend
-    # stdio 模式的 MCP Server 由 Open WebUI 直接拉起；这里以可执行容器方式提供
 
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
@@ -131,10 +143,11 @@ services:
     environment:
       OPENAI_API_BASE_URL: ${OPENAI_BASE_URL:-https://api.deepseek.com}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      # 通过 Open WebUI 的 Settings -> Connections 配置 MCP Server：
-      # command: uv run python /app/mcp-server/server.py (stdio)
+      # 在 Open WebUI 中：设置 → 连接 → MCP Servers，选择 Streamable HTTP 类型：
+      # URL: http://mcp-server:8001/mcp
     depends_on:
       - backend
+      - mcp-server
 
   # MinerU 本地服务（可选）。默认使用远程 MinerU API 或 Mock。
   # mineru:

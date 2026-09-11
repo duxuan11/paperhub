@@ -46,6 +46,23 @@ async def get_job(session: AsyncSession, job_id: str) -> models.Job | None:
     return await session.get(models.Job, job_id)
 
 
+async def get_active_job(
+    session: AsyncSession, paper_id: str, job_type: str
+) -> models.Job | None:
+    """返回该论文下指定类型仍在排队/执行中的任务（用于拦截重复触发）。"""
+    stmt = (
+        select(models.Job)
+        .where(
+            models.Job.paper_id == paper_id,
+            models.Job.job_type == job_type,
+            models.Job.status.in_([models.JobStatus.PENDING, models.JobStatus.RUNNING]),
+        )
+        .order_by(models.Job.created_at.desc())
+        .limit(1)
+    )
+    return await session.scalar(stmt)
+
+
 async def list_jobs(
     session: AsyncSession, paper_id: str | None = None, limit: int = 100
 ) -> Sequence[models.Job]:

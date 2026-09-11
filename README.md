@@ -95,7 +95,7 @@ paperhub/
 │  ├─ app/                 # 页面 + /api/proxy 代理
 │  ├─ components/
 │  └─ lib/
-├─ mcp-server/             # MCP Server（stdio）
+├─ mcp-server/             # MCP Server（stdio / streamable-http）
 ├─ cli/                    # paperhub Typer CLI
 ├─ publishers/wechat/      # client / formatter / publisher（可扩展其它平台）
 ├─ skills/                 # Markdown Skill 定义
@@ -191,10 +191,13 @@ OPENAI_MODEL=deepseek-chat
 
 `docker compose up -d` 会一并启动 Open WebUI（http://localhost:8080）。
 
-在 Open WebUI 中接入 PaperHub MCP Server：`设置 → 连接 → MCP Servers`，添加：
+在 Open WebUI 中接入 PaperHub MCP Server：`设置 → 连接 → MCP Servers`，添加一个 **Streamable HTTP** 类型：
 
-- 命令：`uv run python /app/mcp-server/server.py`（Docker 内）
-- 环境变量：`PAPERHUB_API_URL=http://backend:8000`、`PAPERHUB_API_KEY=...`
+- 类型：`Streamable HTTP`
+- URL：`http://mcp-server:8001/mcp`（Open WebUI 与 MCP Server 同在 compose 网络内）
+
+说明：compose 中的 `mcp-server` 服务以常驻 HTTP 模式运行（`MCP_TRANSPORT=streamable-http`，监听 `8001`）。
+若要改为 stdio 模式由客户端直接拉起，可设置 `MCP_TRANSPORT=stdio`，但此时它不应作为 compose 常驻服务（否则会因 stdin 关闭而退出并触发重启循环）。
 
 MCP 工具：`search_papers` / `get_paper` / `get_paper_markdown` / `get_paper_metadata` / `get_paper_figures` / `get_figure` / `search_paper_content` / `analyze_paper` / `generate_wechat_article` / `publish_wechat`。
 
@@ -304,8 +307,10 @@ cd backend && uv run arq app.workers.main.WorkerSettings
 cd frontend && nvm use 25 && npm install && npm run dev
 # 测试
 cd backend && uv run pytest -q
-# MCP（stdio）
+# MCP（默认 stdio；常驻 HTTP 模式见下）
 cd mcp-server && uv sync && uv run python server.py
+# MCP（streamable-http，监听 http://localhost:8001/mcp）
+cd mcp-server && MCP_TRANSPORT=streamable-http MCP_PORT=8001 uv run python server.py
 ```
 
 ## 常见问题
