@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { apiGet, apiPatch, apiPost, fileUrl } from "@/lib/api";
@@ -12,6 +12,18 @@ const REC_STATUS: Record<string, string> = {
   SUCCESS: "成功",
   FAILED: "失败",
 };
+
+/* ——— 可拖动分栏尺寸约束（px） ——— */
+/** 右侧公众号预览最小宽度：低于此值手机阅读区会被压扁 */
+const PREVIEW_MIN = 340;
+/** 右侧公众号预览最大宽度：避免预览把编辑区吃光 */
+const PREVIEW_MAX = 900;
+/** 左侧 Markdown 编辑区最小宽度，由拖动/窗口变化时自动保证 */
+const EDITOR_MIN = 380;
+/** 分隔条占位宽度（w-2） */
+const DIVIDER_WIDTH = 8;
+/** 默认预览宽度 */
+const PREVIEW_DEFAULT = 440;
 
 function extractOutline(md: string) {
   const items: { level: number; text: string }[] = [];
@@ -43,6 +55,13 @@ export default function ArticleEditorPage() {
   const [lastRecord, setLastRecord] = useState<PublishRecord | null>(null);
   const [mockMode, setMockMode] = useState(false);
 
+  // ——— 可拖动分栏：编辑区 / 公众号预览 ———
+  /** 包住「编辑区 + 分隔条 + 预览」的容器，作为可用宽度的测量基准 */
+  const splitRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const [previewWidth, setPreviewWidth] = useState(PREVIEW_DEFAULT);
+  const [resizing, setResizing] = useState(false);
+
   const load = useCallback(async () => {
     const a = await apiGet<Article>(`/articles/${id}`);
     setArticle(a);
@@ -65,6 +84,72 @@ export default function ArticleEditorPage() {
     load();
     loadRecords();
   }, [load, loadRecords]);
+
+  /**
+   * 把预览宽度收敛到合法区间：
+   * 下限 PREVIEW_MIN 保证手机阅读区可用，上限 = 容器宽度 - 编辑区最小宽度 - 分隔条，
+   * 因此拖动永远不会把编辑区挤没，也不会让整行溢出容器。
+   */
+  const clampPreviewWidth = useCallback((width: number) => {
+    const available = splitRef.current?.clientWidth ?? 0;
+    const max = Math.max(
+      PREVIEW_MIN,
+      Math.min(PREVIEW_MAX, available - EDITOR_MIN - DIVIDER_WIDTH)
+    );
+    return Math.round(Math.min(Math.max(width, PREVIEW_MIN), max));
+  }, []);
+
+  function startResize(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    dragRef.current = { startX: e.clientX, startWidth: previewWidth };
+    setResizing(true);
+  }
+
+  // 拖动期间监听 window：鼠标移出分隔条甚至移出窗口也能继续跟随
+  useEffect(() => {
+    if (!resizing) return;
+    const onMove = (e: PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      // 向左拖动 => 右侧预览变宽
+      setPreviewWidth(clampPreviewWidth(drag.startWidth + (drag.startX - e.clientX)));
+    };
+    const onEnd = () => {
+      dragRef.current = null;
+      setResizing(false);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onEnd);
+    window.addEventListener("pointercancel", onEnd);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onEnd);
+      window.removeEventListener("pointercancel", onEnd);
+    };
+  }, [resizing, clampPreviewWidth]);
+
+  // 拖动时全局禁用文本选中 + 锁定 col-resize 光标，避免选中文字、光标闪烁和布局跳动
+  useEffect(() => {
+    if (!resizing) return;
+    document.body.classList.add("is-resizing");
+    return () => document.body.classList.remove("is-resizing");
+  }, [resizing]);
+
+  // 窗口或容器尺寸变化时重新收敛宽度，保证任何时候布局都合法（不横向溢出）
+  useEffect(() => {
+    const onResize = () => setPreviewWidth((w) => clampPreviewWidth(w));
+    window.addEventListener("resize", onResize);
+    const el = splitRef.current;
+    const observer =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(onResize) : null;
+    if (el && observer) observer.observe(el);
+    onResize();
+    return () => {
+      window.removeEventListener("resize", onResize);
+      observer?.disconnect();
+    };
+  }, [clampPreviewWidth]);
 
   const outline = useMemo(() => extractOutline(content), [content]);
   const preview = useMemo(
@@ -253,7 +338,8 @@ export default function ArticleEditorPage() {
         </div>
       )}
 
-      <div className="flex-1 flex min-h-0">
+      <div className="flex-1 flex min-h-0 overflow-hidden">
+        {/* 文章结构栏：固定宽度，不参与拖动 */}
         <aside className="w-52 shrink-0 border-r border-neutral-200 bg-white overflow-y-auto">
           <div className="px-4 py-3 text-[11px] font-medium text-neutral-400">文章结构</div>
           <nav className="pb-4">
@@ -269,31 +355,85 @@ export default function ArticleEditorPage() {
           </nav>
         </aside>
 
-        <section className="flex-1 min-w-0 flex flex-col border-r border-neutral-200 bg-white">
-          <div className="px-4 py-2 border-b border-neutral-100">
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="标题"
-              className="w-full text-[15px] font-semibold px-2 py-1.5 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+        {/* 编辑区 + 可拖动分隔条 + 公众号预览；作为可拖动宽度的测量基准 */}
+        <div ref={splitRef} className="flex-1 min-w-0 flex overflow-hidden">
+          <section className="flex-1 min-w-0 flex flex-col bg-white">
+            <div className="px-4 py-2 border-b border-neutral-100">
+              <input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="标题"
+                className="w-full text-[15px] font-semibold px-2 py-1.5 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+              />
+            </div>
+            <textarea
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              className="flex-1 resize-none px-6 py-4 font-mono text-[13px] leading-relaxed focus:outline-none"
+              placeholder="Markdown 正文…"
+            />
+          </section>
+
+          {/* 竖向分隔条：hover / 拖动有明显视觉反馈，双击恢复默认宽度 */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="拖动调整公众号预览宽度"
+            aria-valuenow={Math.round(previewWidth)}
+            title="拖动调整预览宽度（双击恢复默认）"
+            onPointerDown={startResize}
+            onDoubleClick={() => setPreviewWidth(clampPreviewWidth(PREVIEW_DEFAULT))}
+            className={`group relative w-2 shrink-0 touch-none select-none cursor-col-resize transition-colors ${
+              resizing
+                ? "bg-brand-100"
+                : "bg-neutral-100 hover:bg-brand-50"
+            }`}
+          >
+            <span
+              className={`pointer-events-none absolute inset-y-0 left-1/2 -translate-x-1/2 transition-all ${
+                resizing
+                  ? "w-0.5 bg-brand-500"
+                  : "w-px bg-neutral-300 group-hover:w-0.5 group-hover:bg-brand-400"
+              }`}
             />
           </div>
-          <textarea
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            className="flex-1 resize-none px-6 py-4 font-mono text-[13px] leading-relaxed focus:outline-none"
-            placeholder="Markdown 正文…"
-          />
-        </section>
 
-        <aside className="w-[420px] shrink-0 overflow-y-auto bg-neutral-50">
-          <div className="px-4 py-3 text-[11px] font-medium text-neutral-400 border-b border-neutral-100 bg-white">
-            微信公众号预览
-          </div>
-          <div className="px-6 py-6 bg-white min-h-full">
-            <Markdown content={preview} paperId={article?.paper_id || undefined} />
-          </div>
-        </aside>
+          {/* 公众号预览：外层宽度可拖动，内层固定为手机阅读宽度 */}
+          <aside
+            className="shrink-0 min-w-0 flex flex-col bg-neutral-100"
+            style={{ width: previewWidth, minWidth: PREVIEW_MIN }}
+          >
+            <div className="px-4 py-3 border-b border-neutral-200 bg-white flex items-center gap-2 shrink-0">
+              <span className="text-[11px] font-medium text-neutral-400">微信公众号预览</span>
+              <span className="text-[11px] text-neutral-300 tabular-nums">
+                {previewWidth}px
+              </span>
+            </div>
+            <div className="flex-1 min-h-0 overflow-hidden p-4">
+              {/* 手机外壳：固定最大宽度模拟手机阅读区，右栏收窄时自动等比收窄 */}
+              <div className="mx-auto flex h-full w-full max-w-[375px] flex-col overflow-hidden rounded-[20px] border border-neutral-200 bg-white shadow-sm">
+                <div className="shrink-0 h-8 px-4 flex items-center justify-between border-b border-neutral-100 bg-neutral-50 text-[10px] text-neutral-400 select-none">
+                  <span>9:41</span>
+                  <span className="tracking-[0.2em]">··· ▮</span>
+                </div>
+                <div className="shrink-0 px-4 py-3 border-b border-neutral-100">
+                  <div className="truncate text-[13px] font-medium text-neutral-800">
+                    PaperHub · 科研速递
+                  </div>
+                  <div className="mt-0.5 truncate text-[11px] text-neutral-400">
+                    {title || "未命名文章"}
+                  </div>
+                </div>
+                {/* 正文超出时在手机屏幕内滚动 */}
+                <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+                  <div className="px-4 py-4">
+                    <Markdown content={preview} paperId={article?.paper_id || undefined} />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </aside>
+        </div>
       </div>
     </div>
   );
