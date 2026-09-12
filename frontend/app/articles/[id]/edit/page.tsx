@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { apiGet, apiPatch, apiPost, fileUrl } from "@/lib/api";
-import type { Article, PublishRecord } from "@/lib/types";
-import { Markdown } from "@/components/Markdown";
+import { apiDeleteCover, apiGet, apiPatch, apiPost, apiUploadCover, fileUrl } from "@/lib/api";
+import type { Article, PublishRecord, WechatTheme } from "@/lib/types";
+import { WeChatPreview } from "@/components/WeChatPreview";
 
 const REC_STATUS: Record<string, string> = {
   PENDING: "推送中",
@@ -55,6 +55,15 @@ export default function ArticleEditorPage() {
   const [lastRecord, setLastRecord] = useState<PublishRecord | null>(null);
   const [mockMode, setMockMode] = useState(false);
 
+  // ——— 公众号发布配置：作者 / 摘要 / Theme / 封面 ———
+  const [summary, setSummary] = useState("");
+  const [author, setAuthor] = useState("");
+  const [themeId, setThemeId] = useState("");
+  const [coverImage, setCoverImage] = useState<string | null>(null);
+  const [themes, setThemes] = useState<WechatTheme[]>([]);
+  const [coverBusy, setCoverBusy] = useState(false);
+  const coverInputRef = useRef<HTMLInputElement | null>(null);
+
   // ——— 可拖动分栏：编辑区 / 公众号预览 ———
   /** 包住「编辑区 + 分隔条 + 预览」的容器，作为可用宽度的测量基准 */
   const splitRef = useRef<HTMLDivElement | null>(null);
@@ -67,7 +76,19 @@ export default function ArticleEditorPage() {
     setArticle(a);
     setTitle(a.title || "");
     setContent(a.content || "");
+    setSummary(a.summary || "");
+    setAuthor(a.author || "");
+    setThemeId(a.theme || "");
+    setCoverImage(a.cover_image || null);
   }, [id]);
+
+  const loadThemes = useCallback(async () => {
+    try {
+      setThemes(await apiGet<WechatTheme[]>("/wechat/themes"));
+    } catch {
+      // 主题接口不可用时退回普通 Markdown 预览，不影响编辑与发布
+    }
+  }, []);
 
   const loadRecords = useCallback(async () => {
     try {
@@ -83,7 +104,13 @@ export default function ArticleEditorPage() {
   useEffect(() => {
     load();
     loadRecords();
-  }, [load, loadRecords]);
+    loadThemes();
+  }, [load, loadRecords, loadThemes]);
+
+  // 未指定主题时默认选中等价于后端默认的主题（列表第一项）
+  useEffect(() => {
+    if (!themeId && themes.length) setThemeId(themes[0].id);
+  }, [themes, themeId]);
 
   /**
    * 把预览宽度收敛到合法区间：
@@ -156,21 +183,65 @@ export default function ArticleEditorPage() {
     () => resolveFigures(content, article?.images || null),
     [content, article]
   );
+  const activeTheme = useMemo(
+    () => themes.find((t) => t.id === themeId) || themes[0] || null,
+    [themes, themeId]
+  );
 
   function flash(msg: string) {
     setNotice(msg);
     setTimeout(() => setNotice(""), 2500);
   }
 
+  /** 把编辑区 + 发布配置一次性写回文章（发布前会自动调用）。 */
+  async function persist() {
+    await apiPatch(`/articles/${id}`, {
+      title,
+      content,
+      summary,
+      author,
+      theme: themeId || null,
+      cover_image: coverImage,
+    });
+  }
+
   async function save() {
     setSaving(true);
     try {
-      await apiPatch(`/articles/${id}`, { title, content });
+      await persist();
       flash("已保存草稿");
     } catch (e) {
       alert(`保存失败: ${e}`);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function uploadCover(file: File) {
+    setCoverBusy(true);
+    try {
+      const updated = await apiUploadCover(id, file);
+      setArticle(updated);
+      setCoverImage(updated.cover_image || null);
+      flash("封面已更新");
+    } catch (e) {
+      alert(`封面上传失败: ${e}`);
+    } finally {
+      setCoverBusy(false);
+      if (coverInputRef.current) coverInputRef.current.value = "";
+    }
+  }
+
+  async function clearCover() {
+    setCoverBusy(true);
+    try {
+      const updated = await apiDeleteCover(id);
+      setArticle(updated);
+      setCoverImage(null);
+    } catch (e) {
+      alert(`清除封面失败: ${e}`);
+    } finally {
+      setCoverBusy(false);
     }
   }
 
@@ -226,6 +297,8 @@ export default function ArticleEditorPage() {
     const label = publish ? "发布" : "发送草稿箱";
     setActing(publish ? "发布中" : "发送中");
     try {
+      // 先把当前编辑内容与发布配置（作者/摘要/主题/封面）落库，再推送
+      await persist();
       const prevId = lastRecord?.id ?? null;
       const res = await apiPost<{ record_id: string; mock: boolean }>(
         publish ? "/wechat/publish" : "/wechat/draft",
@@ -338,6 +411,93 @@ export default function ArticleEditorPage() {
         </div>
       )}
 
+      {/* 公众号发布配置：标题在编辑区，这里控制作者 / 摘要 / Theme / 封面 */}
+      <div className="px-6 py-2 bg-white border-b border-neutral-200 flex flex-wrap items-center gap-x-5 gap-y-2 shrink-0 text-[12px] text-neutral-500">
+        <label className="flex items-center gap-1.5">
+          作者
+          <input
+            value={author}
+            onChange={(e) => setAuthor(e.target.value)}
+            placeholder="PaperHub"
+            className="w-28 px-2 py-1 rounded-md border border-neutral-200 focus:outline-none focus:border-brand-300 text-neutral-700"
+          />
+        </label>
+        <label className="flex items-center gap-1.5">
+          Theme
+          <select
+            value={themeId}
+            onChange={(e) => setThemeId(e.target.value)}
+            className="px-2 py-1 rounded-md border border-neutral-200 bg-white focus:outline-none focus:border-brand-300 text-neutral-700"
+          >
+            {themes.length === 0 && <option value="">默认主题</option>}
+            {themes.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="flex items-center gap-2">
+          封面
+          <input
+            ref={coverInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) uploadCover(f);
+            }}
+          />
+          <button
+            onClick={() => coverInputRef.current?.click()}
+            disabled={coverBusy}
+            className="px-2 py-1 rounded-md border border-neutral-200 text-neutral-600 hover:border-brand-300"
+          >
+            {coverBusy ? "处理中…" : "上传封面"}
+          </button>
+          {(article?.images?.length ?? 0) > 0 && (
+            <select
+              value={coverImage && article?.images?.includes(coverImage) ? coverImage : ""}
+              onChange={(e) => setCoverImage(e.target.value || null)}
+              className="px-2 py-1 rounded-md border border-neutral-200 bg-white text-neutral-700 focus:outline-none focus:border-brand-300"
+            >
+              <option value="">选择文章配图…</option>
+              {article?.images?.map((key, idx) => (
+                <option key={key} value={key}>
+                  配图 {idx + 1}
+                </option>
+              ))}
+            </select>
+          )}
+          {coverImage && (
+            <>
+              <img
+                src={fileUrl(coverImage)}
+                alt="封面"
+                className="h-7 w-auto max-w-[80px] rounded border border-neutral-200 object-cover"
+              />
+              <button
+                onClick={clearCover}
+                disabled={coverBusy}
+                className="text-neutral-400 hover:text-red-500"
+              >
+                清除
+              </button>
+            </>
+          )}
+        </div>
+        <label className="flex items-center gap-1.5 flex-1 min-w-[220px]">
+          摘要
+          <input
+            value={summary}
+            onChange={(e) => setSummary(e.target.value)}
+            placeholder="公众号摘要 / 简介"
+            className="flex-1 min-w-0 px-2 py-1 rounded-md border border-neutral-200 focus:outline-none focus:border-brand-300 text-neutral-700"
+          />
+        </label>
+      </div>
+
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* 文章结构栏：固定宽度，不参与拖动 */}
         <aside className="w-52 shrink-0 border-r border-neutral-200 bg-white overflow-y-auto">
@@ -405,6 +565,12 @@ export default function ArticleEditorPage() {
           >
             <div className="px-4 py-3 border-b border-neutral-200 bg-white flex items-center gap-2 shrink-0">
               <span className="text-[11px] font-medium text-neutral-400">微信公众号预览</span>
+              {activeTheme && (
+                <span className="text-[11px] text-brand-500 truncate">
+                  {activeTheme.name}
+                </span>
+              )}
+              <span className="flex-1" />
               <span className="text-[11px] text-neutral-300 tabular-nums">
                 {previewWidth}px
               </span>
@@ -424,10 +590,21 @@ export default function ArticleEditorPage() {
                     {title || "未命名文章"}
                   </div>
                 </div>
-                {/* 正文超出时在手机屏幕内滚动 */}
+                {/* 正文超出时在手机屏幕内滚动；封面 + 主题化正文 */}
                 <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+                  {coverImage && (
+                    <img
+                      src={fileUrl(coverImage)}
+                      alt="封面"
+                      className="block w-full object-cover"
+                    />
+                  )}
                   <div className="px-4 py-4">
-                    <Markdown content={preview} paperId={article?.paper_id || undefined} />
+                    <WeChatPreview
+                      content={preview}
+                      theme={activeTheme}
+                      paperId={article?.paper_id || undefined}
+                    />
                   </div>
                 </div>
               </div>

@@ -1,12 +1,16 @@
-"""文章 API（列表/编辑/润色/缩短/扩展/重新生成）。"""
+"""文章 API（列表/编辑/润色/缩短/扩展/重新生成/封面）。"""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import models, repositories, schemas
 from app.core.database import get_session
+from app.core.minio import storage
 from app.core.security import require_auth
 from app.schemas import ArticleActionRequest, ArticleOut, ArticleUpdateRequest
 from app.services import article as article_service
@@ -15,6 +19,24 @@ from app.services.llm import get_llm_service
 router = APIRouter(
     prefix="/api/v1/articles", tags=["articles"], dependencies=[Depends(require_auth)]
 )
+
+# 公众号封面：支持的类型与大小上限（微信封面推荐 2.35:1，大小限制 < 10MB）
+_COVER_EXT = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+_MAX_COVER_BYTES = 10 * 1024 * 1024
+
+
+def _cover_ext(content_type: str | None, filename: str | None) -> str | None:
+    ext = _COVER_EXT.get((content_type or "").lower())
+    if ext:
+        return ext
+    suffix = Path(filename or "").suffix.lower()
+    return suffix if suffix in {v for v in _COVER_EXT.values()} else None
 
 ACTION_PROMPTS = {
     "polish": "请润色以下公众号文章，使语言更流畅、专业、易读，保持结构不变，输出完整 Markdown。",
@@ -51,6 +73,52 @@ async def update_article(
         raise HTTPException(status_code=404, detail="文章不存在")
     for field, value in req.model_dump(exclude_unset=True).items():
         setattr(art, field, value)
+    await session.commit()
+    await session.refresh(art)
+    return art
+
+
+@router.post("/{article_id}/cover", response_model=ArticleOut)
+async def upload_article_cover(
+    article_id: str,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+):
+    """上传公众号文章封面，写入对象存储并把 key 记到 article.cover_image。
+
+    发布时该封面会被上传为微信永久素材，作为草稿 thumb_media_id。
+    """
+    art = await repositories.get_article(session, article_id)
+    if not art:
+        raise HTTPException(status_code=404, detail="文章不存在")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="封面文件为空")
+    if len(data) > _MAX_COVER_BYTES:
+        raise HTTPException(status_code=400, detail="封面图片不能超过 10MB")
+    ext = _cover_ext(file.content_type, file.filename)
+    if not ext:
+        raise HTTPException(
+            status_code=400, detail="封面仅支持 PNG / JPG / WEBP / GIF 图片"
+        )
+    key = f"articles/{article_id}/cover/{uuid.uuid4().hex[:12]}{ext}"
+    storage.put_bytes(key, data, file.content_type or "image/png")
+    art.cover_image = key
+    await session.commit()
+    await session.refresh(art)
+    return art
+
+
+@router.delete("/{article_id}/cover", response_model=ArticleOut)
+async def delete_article_cover(
+    article_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """清除文章封面配置（回退为「首图 / 默认封面」策略）。"""
+    art = await repositories.get_article(session, article_id)
+    if not art:
+        raise HTTPException(status_code=404, detail="文章不存在")
+    art.cover_image = None
     await session.commit()
     await session.refresh(art)
     return art

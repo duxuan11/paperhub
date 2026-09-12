@@ -45,6 +45,23 @@ export async function apiUploadFiles(files: File[]): Promise<any[]> {
   return r.json();
 }
 
+export async function apiUploadCover(articleId: string, file: File): Promise<any> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const r = await fetch(`${PROXY}/articles/${articleId}/cover`, {
+    method: "POST",
+    body: fd,
+  });
+  if (!r.ok) throw new Error(`封面上传失败 ${r.status}: ${await safeText(r)}`);
+  return r.json();
+}
+
+export async function apiDeleteCover(articleId: string): Promise<any> {
+  const r = await fetch(`${PROXY}/articles/${articleId}/cover`, { method: "DELETE" });
+  if (!r.ok) throw new Error(`清除封面失败 ${r.status}: ${await safeText(r)}`);
+  return r.json();
+}
+
 export function fileUrl(key: string): string {
   return `${PROXY}/files/${encodeURIComponent(key)}`;
 }

@@ -1,124 +1,24 @@
-"""Markdown -> 微信公众号 HTML 格式化。
+"""Markdown -> 微信公众号 HTML 格式化（向后兼容入口）。
 
-微信公众号图文消息的 content 字段接受 HTML（受白名单标签限制）。
-这里做尽量安全的转换：标题、段落、列表、引用、代码、粗体、斜体、链接、图片。
+历史上本模块自带一套简易转换逻辑；现在样式统一由 Theme 驱动，真正的渲染在
+:mod:`publishers.wechat.renderer`。这里保留 ``markdown_to_wechat_html`` 以便旧
+调用方（以及测试）继续工作，默认使用 PaperHub Science 主题。
 """
 
 from __future__ import annotations
 
-import html
-import re
+from publishers.wechat.renderer import escape, render_markdown_html, style_attr
+from publishers.wechat.themes import DEFAULT_THEME_ID, WeChatTheme, get_theme
 
-ALLOWED_IMG_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
-LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
-
-
-def escape(text: str) -> str:
-    return html.escape(text, quote=False)
+__all__ = ["escape", "style_attr", "markdown_to_wechat_html"]
 
 
-def _inline(text: str) -> str:
-    text = escape(text)
-    text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
-    text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
-    text = re.sub(r"`(.+?)`", r"<code>\1</code>", text)
-    text = LINK_RE.sub(r'<a href="\2">\1</a>', text)
-    return text
-
-
-def markdown_to_wechat_html(md: str, image_map: dict[str, str] | None = None) -> str:
-    """image_map: {占位名: 图片URL}，用于替换 ![](placeholder) 中的占位符。"""
-    image_map = image_map or {}
-    lines = md.splitlines()
-    out: list[str] = []
-    in_code = False
-    in_list = False
-    list_tag = ""
-
-    def close_list():
-        nonlocal in_list, list_tag
-        if in_list:
-            out.append(f"</{list_tag}>")
-            in_list = False
-
-    for ln in lines:
-        stripped = ln.strip()
-        if stripped.startswith("```"):
-            if in_code:
-                out.append("</pre>")
-                in_code = False
-            else:
-                close_list()
-                out.append("<pre>")
-                in_code = True
-            continue
-        if in_code:
-            out.append(escape(ln))
-            continue
-
-        if not stripped:
-            close_list()
-            continue
-
-        m = ALLOWED_IMG_RE.search(ln)
-        if m:
-            close_list()
-            alt = m.group(1)
-            src = m.group(2)
-            src = image_map.get(src, src)
-            out.append(f'<p><img src="{src}" alt="{escape(alt)}"></p>')
-            continue
-
-        if stripped.startswith("######"):
-            close_list()
-            out.append(f"<h6>{_inline(stripped[6:].strip())}</h6>")
-        elif stripped.startswith("#####"):
-            close_list()
-            out.append(f"<h5>{_inline(stripped[5:].strip())}</h5>")
-        elif stripped.startswith("####"):
-            close_list()
-            out.append(f"<h4>{_inline(stripped[4:].strip())}</h4>")
-        elif stripped.startswith("###"):
-            close_list()
-            out.append(f"<h3>{_inline(stripped[3:].strip())}</h3>")
-        elif stripped.startswith("##"):
-            close_list()
-            out.append(f"<h2>{_inline(stripped[2:].strip())}</h2>")
-        elif stripped.startswith("# "):
-            close_list()
-            out.append(f"<h2>{_inline(stripped[2:].strip())}</h2>")
-        elif stripped.startswith("> "):
-            close_list()
-            out.append(f"<blockquote>{_inline(stripped[2:])}</blockquote>")
-        elif stripped.startswith("- ") or stripped.startswith("* "):
-            if not in_list or list_tag != "ul":
-                close_list()
-                out.append("<ul>")
-                in_list = True
-                list_tag = "ul"
-            out.append(f"<li>{_inline(stripped[2:])}</li>")
-        elif re.match(r"^\d+\.\s", stripped):
-            if not in_list or list_tag != "ol":
-                close_list()
-                out.append("<ol>")
-                in_list = True
-                list_tag = "ol"
-            item = re.sub(r"^\d+\.\s", "", stripped)
-            out.append(f"<li>{_inline(item)}</li>")
-        elif stripped.startswith("---"):
-            close_list()
-            out.append("<hr>")
-        else:
-            close_list()
-            out.append(f"<p>{_inline(stripped)}</p>")
-
-    close_list()
-    if in_code:
-        out.append("</pre>")
-    html_out = "\n".join(out)
-    # 兜底：未被 markdown 图片语法包起来的 {{figure:N}} 占位符也要替换掉，
-    # 否则会把字面量 "{{figure:0}}" 发到公众号正文里。
-    for placeholder, url in image_map.items():
-        if placeholder in html_out:
-            html_out = html_out.replace(placeholder, url)
-    return html_out
+def markdown_to_wechat_html(
+    md: str,
+    image_map: dict[str, str] | None = None,
+    theme: WeChatTheme | str | None = None,
+) -> str:
+    """兼容旧签名：``(md, image_map)``；新增可选 ``theme``（对象或 id）。"""
+    if isinstance(theme, str):
+        theme = get_theme(theme)
+    return render_markdown_html(md, theme or get_theme(DEFAULT_THEME_ID), image_map)

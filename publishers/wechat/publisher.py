@@ -9,7 +9,8 @@ import uuid
 from dataclasses import dataclass
 
 from publishers.wechat.client import WeChatClient
-from publishers.wechat.formatter import markdown_to_wechat_html
+from publishers.wechat.renderer import render_markdown_html
+from publishers.wechat.themes import DEFAULT_THEME_ID, get_theme
 
 # 微信正文长度上限（字符）
 MAX_CONTENT_LEN = 20000
@@ -124,13 +125,15 @@ def build_article_payload(
     author: str = "PaperHub",
     digest: str = "",
     content_source_url: str = "",
+    theme: str | None = None,
 ) -> dict:
     """把 markdown 文章组装成 draft/add 的 articles[] 元素。
 
-    content: HTML（图片已替换为微信可访问的 mmbiz URL）
+    content: HTML（图片已替换为微信可访问的 mmbiz URL，且全部为 inline style）
     thumb_media_id: 封面永久素材 media_id —— 图文消息（news）必填
+    theme: 主题 id；未知 / 缺省时回退到默认主题（PaperHub Science）
     """
-    html = markdown_to_wechat_html(content_md, image_map)
+    html = render_markdown_html(content_md, get_theme(theme or DEFAULT_THEME_ID), image_map)
     if len(html) > MAX_CONTENT_LEN:
         raise ValueError(
             f"正文长度 {len(html)} 超过微信限制 {MAX_CONTENT_LEN} 字符，"

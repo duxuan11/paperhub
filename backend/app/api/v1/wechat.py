@@ -13,13 +13,22 @@ from app import models, repositories, schemas
 from app.api.v1.guards import ensure_no_active_job
 from app.core.database import get_session
 from app.core.security import require_auth
-from app.schemas import WeChatRequest, WeChatDraftOut
-from app.services.wechat import get_publisher
+from app.schemas import WeChatRequest, WeChatDraftOut, WechatThemeOut
+from app.services.wechat import get_publisher, list_themes
 from app.workers import enqueue
 
 router = APIRouter(
     prefix="/api/v1/wechat", tags=["wechat"], dependencies=[Depends(require_auth)]
 )
+
+
+@router.get("/themes", response_model=list[WechatThemeOut])
+async def list_wechat_themes():
+    """公众号主题列表。
+
+    前端拉取后直接用于实时预览，因此预览样式与发布使用的样式同源。
+    """
+    return [theme.to_dict() for theme in list_themes()]
 
 
 async def _submit(

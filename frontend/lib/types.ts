@@ -46,11 +46,28 @@ export interface Article {
   html: string | null;
   style: string | null;
   skill: string | null;
+  author: string | null;
+  theme: string | null;
+  cover_image: string | null;
   images: string[] | null;
   references: string[] | null;
   status: string;
   created_at: string | null;
   updated_at: string | null;
+}
+
+/** 单个元素的 inline style：CSS 属性 -> 值 */
+export interface WechatThemeStyle {
+  [prop: string]: string;
+}
+
+/** 公众号主题配置对象（由后端 /wechat/themes 提供，前端据此实时渲染预览） */
+export interface WechatTheme {
+  id: string;
+  name: string;
+  description?: string;
+  styles: Record<string, WechatThemeStyle>;
+  options?: Record<string, unknown>;
 }
 
 export interface PublishRecord {

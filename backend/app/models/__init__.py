@@ -158,6 +158,10 @@ class Article(Base):
     html: Mapped[str | None] = mapped_column(Text, nullable=True)
     style: Mapped[str | None] = mapped_column(String(64), nullable=True)
     skill: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 公众号发布配置（新增，全部 nullable，兼容旧数据）
+    author: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    theme: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    cover_image: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     images: Mapped[list | None] = mapped_column(JSON, nullable=True)
     references: Mapped[list | None] = mapped_column(JSON, nullable=True)
     status: Mapped[ArticleStatus] = mapped_column(

@@ -64,6 +64,9 @@ class ArticleOut(BaseModel):
     html: str | None
     style: str | None
     skill: str | None
+    author: str | None = None
+    theme: str | None = None
+    cover_image: str | None = None
     images: list | None
     references: list | None
     status: str
@@ -72,6 +75,16 @@ class ArticleOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class WechatThemeOut(BaseModel):
+    """公众号主题配置（前端据此实时渲染预览，保证与发布效果一致）。"""
+
+    id: str
+    name: str
+    description: str = ""
+    styles: dict[str, dict[str, str]] = Field(default_factory=dict)
+    options: dict[str, Any] = Field(default_factory=dict)
 
 
 class PublishRecordOut(BaseModel):
@@ -136,6 +149,9 @@ class ArticleUpdateRequest(BaseModel):
     summary: str | None = None
     content: str | None = None
     html: str | None = None
+    author: str | None = None
+    theme: str | None = None
+    cover_image: str | None = None
 
 
 class PublishRequest(BaseModel):

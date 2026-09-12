@@ -27,4 +27,8 @@ async def get_file(key: str):
         content_type = "application/pdf"
     elif key.endswith(".jpg") or key.endswith(".jpeg"):
         content_type = "image/jpeg"
+    elif key.endswith(".webp"):
+        content_type = "image/webp"
+    elif key.endswith(".gif"):
+        content_type = "image/gif"
     return Response(content=data, media_type=content_type)
