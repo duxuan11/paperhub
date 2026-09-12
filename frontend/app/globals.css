@@ -72,6 +72,13 @@ body {
   @apply font-semibold;
 }
 
+/* 拖动分栏时为整个页面锁定光标并禁止选中文本，避免选中文字 / 光标闪烁 / 布局抖动 */
+body.is-resizing,
+body.is-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
 /* 滚动条 */
 ::-webkit-scrollbar {
   width: 8px;
