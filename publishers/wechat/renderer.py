@@ -29,6 +29,15 @@ _TABLE_SEP_RE = re.compile(r"^\s*\|?[\s:|-]+\|[\s:|-]*$")
 _ITALIC_LINE_RE = re.compile(r"^\*(?!\*)(.+?)\*$")
 _UNDERSCORE_LINE_RE = re.compile(r"^_(.+?)_$")
 _CAPTION_HINT_RE = re.compile(r"^(图|表|Figure|Table|Fig\.?)\s*\d*\s*[:：.．]?", re.I)
+# GitHub 风格提示块：``> [!NOTE] 标题``（也接受中文关键字）
+_ALERT_RE = re.compile(r"^\[!([A-Za-z\u4e00-\u9fa5]+)\]\s*(.*)$")
+_CALLOUT_TITLES = {
+    "note": "提示",
+    "tip": "技巧",
+    "important": "重要",
+    "warning": "警告",
+    "caution": "注意",
+}
 
 
 def escape(text: str) -> str:
@@ -200,15 +209,37 @@ def render_markdown_html(
             i += 1
             continue
 
-        # 引用（合并连续行）
+        # 引用 / Callout（合并连续行）
         if stripped.startswith(">"):
             quote: list[str] = []
             while i < total and lines[i].strip().startswith(">"):
                 quote.append(lines[i].strip().lstrip(">").strip())
                 i += 1
-            body = "<br>".join(
-                _inline(q, theme, image_map) for q in quote if q != ""
-            )
+            quote = [q for q in quote if q != ""]
+            alert = _ALERT_RE.match(quote[0]) if quote else None
+            if alert:
+                kind = alert.group(1)
+                title = alert.group(2).strip() or _CALLOUT_TITLES.get(
+                    kind.lower(), kind
+                )
+                parts = [
+                    _tag(
+                        "p",
+                        _inline(title, theme, image_map),
+                        theme.css("calloutTitle"),
+                    )
+                ]
+                for line in quote[1:]:
+                    parts.append(
+                        _tag(
+                            "p",
+                            _inline(line, theme, image_map),
+                            theme.css("calloutText"),
+                        )
+                    )
+                blocks.append(_tag("section", "".join(parts), theme.css("callout")))
+                continue
+            body = "<br>".join(_inline(q, theme, image_map) for q in quote)
             blocks.append(_tag("blockquote", body, theme.css("blockquote")))
             continue
 

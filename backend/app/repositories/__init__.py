@@ -97,16 +97,17 @@ async def list_articles(
     return (await session.scalars(stmt.limit(limit))).all()
 
 
-async def get_setting(session: AsyncSession, key: str) -> str | None:
-    row = await session.get(models.AppSetting, key)
-    return row.value if row else None
+async def list_wechat_themes(
+    session: AsyncSession,
+) -> Sequence[models.WeChatArticleTheme]:
+    stmt = select(models.WeChatArticleTheme).order_by(
+        models.WeChatArticleTheme.is_builtin.desc(),
+        models.WeChatArticleTheme.created_at.asc(),
+    )
+    return (await session.scalars(stmt)).all()
 
 
-async def set_setting(session: AsyncSession, key: str, value: str | None) -> None:
-    """写入或覆盖一个配置项（value 为 None/空串时视为清除）。"""
-    row = await session.get(models.AppSetting, key)
-    if row is None:
-        row = models.AppSetting(key=key)
-        session.add(row)
-    row.value = value
-    await session.commit()
+async def get_wechat_theme(
+    session: AsyncSession, theme_id: str
+) -> models.WeChatArticleTheme | None:
+    return await session.get(models.WeChatArticleTheme, theme_id)

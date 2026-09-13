@@ -29,6 +29,15 @@ const TABLE_SEP_RE = /^\s*\|?[\s:|-]+\|[\s:|-]*$/;
 const ITALIC_LINE_RE = /^\*(?!\*)(.+?)\*$/;
 const UNDERSCORE_LINE_RE = /^_(.+?)_$/;
 const CAPTION_HINT_RE = /^(图|表|Figure|Table|Fig\.?)\s*\d*\s*[:：.．]?/i;
+// GitHub 风格提示块：``> [!NOTE] 标题``（也接受中文关键字）
+const ALERT_RE = /^\[!([A-Za-z\u4e00-\u9fa5]+)\]\s*(.*)$/;
+const CALLOUT_TITLES: Record<string, string> = {
+  note: "提示",
+  tip: "技巧",
+  important: "重要",
+  warning: "警告",
+  caution: "注意",
+};
 
 export function escapeHtml(text: string): string {
   return text
@@ -188,17 +197,31 @@ export function renderWechatHtml(
       continue;
     }
 
-    // 引用（合并连续行）
+    // 引用 / Callout（合并连续行）
     if (stripped.startsWith(">")) {
       const quote: string[] = [];
       while (i < total && lines[i].trim().startsWith(">")) {
-        quote.push(lines[i].trim().replace(/^>/, "").trim());
+        quote.push(lines[i].trim().replace(/^>+/, "").trim());
         i += 1;
       }
-      const body = quote
-        .filter((q) => q !== "")
-        .map((q) => inline(q, theme, opts))
-        .join("<br>");
+      const bodyLines = quote.filter((q) => q !== "");
+      const alert = bodyLines.length ? ALERT_RE.exec(bodyLines[0]) : null;
+      if (alert) {
+        const kind = alert[1];
+        const title =
+          alert[2].trim() || CALLOUT_TITLES[kind.toLowerCase()] || kind;
+        const parts = [
+          tag("p", inline(title, theme, opts), themeCss(theme, "calloutTitle")),
+        ];
+        for (const line of bodyLines.slice(1)) {
+          parts.push(
+            tag("p", inline(line, theme, opts), themeCss(theme, "calloutText"))
+          );
+        }
+        blocks.push(tag("section", parts.join(""), themeCss(theme, "callout")));
+        continue;
+      }
+      const body = bodyLines.map((q) => inline(q, theme, opts)).join("<br>");
       blocks.push(tag("blockquote", body, themeCss(theme, "blockquote")));
       continue;
     }

@@ -2,6 +2,8 @@
 
 推送是异步的（Arq 任务），接口只负责落一条 PublishRecord + 入队，
 真实结果通过 GET /wechat/records 查询（前端轮询该接口拿成功/失败与错误原因）。
+
+主题（Theme）的 CRUD 见 ``app.api.v1.wechat_themes``。
 """
 
 from __future__ import annotations
@@ -13,22 +15,13 @@ from app import models, repositories, schemas
 from app.api.v1.guards import ensure_no_active_job
 from app.core.database import get_session
 from app.core.security import require_auth
-from app.schemas import WeChatRequest, WeChatDraftOut, WechatThemeOut
-from app.services.wechat import get_publisher, list_themes
+from app.schemas import WeChatRequest, WeChatDraftOut
+from app.services.wechat import get_publisher
 from app.workers import enqueue
 
 router = APIRouter(
     prefix="/api/v1/wechat", tags=["wechat"], dependencies=[Depends(require_auth)]
 )
-
-
-@router.get("/themes", response_model=list[WechatThemeOut])
-async def list_wechat_themes():
-    """公众号主题列表。
-
-    前端拉取后直接用于实时预览，因此预览样式与发布使用的样式同源。
-    """
-    return [theme.to_dict() for theme in list_themes()]
 
 
 async def _submit(

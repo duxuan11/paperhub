@@ -107,9 +107,11 @@ export default function ArticleEditorPage() {
     loadThemes();
   }, [load, loadRecords, loadThemes]);
 
-  // 未指定主题时默认选中等价于后端默认的主题（列表第一项）
+  // 未指定主题时选中 Settings 中的默认主题（无默认标记时退回列表第一项）
   useEffect(() => {
-    if (!themeId && themes.length) setThemeId(themes[0].id);
+    if (!themeId && themes.length) {
+      setThemeId((themes.find((t) => t.is_default) ?? themes[0]).id);
+    }
   }, [themes, themeId]);
 
   /**
@@ -433,9 +435,16 @@ export default function ArticleEditorPage() {
             {themes.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
+                {t.is_default ? "（默认）" : ""}
               </option>
             ))}
           </select>
+          <Link
+            href="/settings"
+            className="text-[11px] text-brand-600 hover:underline"
+          >
+            管理模板
+          </Link>
         </label>
         <div className="flex items-center gap-2">
           封面

@@ -23,6 +23,7 @@ from app.services.llm import get_llm_service
 from app.services.mineru import get_mineru_service
 from app.services.skill import load_skill
 from app.services.wechat import build_article_payload, get_publisher
+from app.services import wechat_theme as wechat_theme_service
 from app.services.yolo import (
     HeuristicFigureService,
     RENDER_ZOOM,
@@ -587,8 +588,10 @@ async def publish_wechat_article(
             images = list(art.images or [])
             digest = art.summary or ""
             author = getattr(art, "author", None) or "PaperHub"
-            theme = getattr(art, "theme", None)
+            theme_id = getattr(art, "theme", None)
             cover_image = getattr(art, "cover_image", None)
+            # 主题从数据库解析（内置主题亦有行），因此用户自定义主题无需重启 Worker
+            theme_obj = await wechat_theme_service.resolve_theme(session, theme_id)
 
         await _set_job(job_id, progress=20)
         image_map = await _upload_content_images(publisher, images)
@@ -600,7 +603,7 @@ async def publish_wechat_article(
             thumb_media_id=thumb_media_id,
             author=author,
             digest=digest,
-            theme=theme,
+            theme=theme_obj,
         )
         await _set_job(job_id, progress=45)
 

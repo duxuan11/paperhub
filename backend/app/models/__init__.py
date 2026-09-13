@@ -6,6 +6,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     Enum,
     Float,
@@ -213,3 +214,30 @@ class PublishRecord(Base):
     )
 
     article: Mapped["Article"] = relationship(back_populates="publish_records")
+
+
+class WeChatArticleTheme(Base):
+    """微信公众号推文排版主题（Theme）。
+
+    ``config`` 存的是**设计变量**（colors / typography / components），由
+    ``publishers.wechat.theme_config.compile_styles`` 编译成渲染器使用的
+    inline style；内置主题由 ``publishers.wechat.themes.BUILTIN_THEMES`` 在
+    启动时幂等写入（``is_builtin=True``），用户可复制后编辑自定义主题。
+    """
+
+    __tablename__ = "wechat_article_themes"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    is_builtin: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

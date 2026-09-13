@@ -3,12 +3,19 @@
 设计目标：**文章内容与视觉样式解耦**。
 
 - 文章只保存 Markdown 正文；主题只描述「怎么显示」；
-- 渲染器（``publishers.wechat.renderer``）负责把主题样式落到 inline style 的 HTML；
-- 新增主题只需注册一个 :class:`WeChatTheme` 配置对象（或放一个 JSON 到
-  ``publishers/wechat/themes/``），**不需要改渲染代码，也不需要动 React 组件**。
+- 主题由**设计变量**定义（配色 colors / 字体排版 typography / 组件覆盖
+  components），由 :mod:`publishers.wechat.theme_config` 编译成
+  「元素 -> CSS 属性」表；
+- 渲染器（``publishers.wechat.renderer``）负责把编译后的样式落到 inline style
+  的 HTML，**不需要改渲染代码，也不需要动 React 组件**。
 
 主题样式统一使用「CSS 属性 -> 值」的普通 dict，且全部是微信编辑器可接受的
-inline style（不使用伪元素 / 外部 CSS / class），因此正文不依赖任何外部样式表。
+inline style（不使用伪元素 / 外部 CSS / class / CSS 变量），因此正文不依赖任何
+外部样式表。
+
+内置主题定义在 :data:`BUILTIN_THEMES`；用户自定义主题持久化在数据库
+``wechat_article_themes``，由 ``app.services.wechat_theme`` 加载后编译为同样的
+``styles`` 结构，发布链路使用同一套渲染器。
 """
 
 from __future__ import annotations
@@ -18,9 +25,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# CSS 属性名 -> 值；值为纯字符串（如 "16px" / "#1f2328"）
-Style = dict[str, str]
-Styles = dict[str, Style]
+from publishers.wechat.theme_config import (
+    Style,
+    Styles,
+    compile_styles,
+    merge_config,
+)
+
+__all__ = [
+    "DEFAULT_THEME_ID",
+    "Style",
+    "Styles",
+    "WeChatTheme",
+    "BUILTIN_THEMES",
+    "register_theme",
+    "get_theme",
+    "list_themes",
+    "load_theme_dir",
+]
 
 DEFAULT_THEME_ID = "paperhub-science"
 
@@ -32,6 +54,8 @@ class WeChatTheme:
     description: str = ""
     styles: Styles = field(default_factory=dict)
     options: dict[str, Any] = field(default_factory=dict)
+    config: dict[str, Any] | None = None
+    is_builtin: bool = False
 
     def css(self, key: str) -> Style:
         """取某个元素的样式；未定义时返回空 dict（渲染器会退化为无 style）。"""
@@ -44,16 +68,27 @@ class WeChatTheme:
             "description": self.description,
             "styles": self.styles,
             "options": self.options,
+            "config": self.config,
+            "is_builtin": self.is_builtin,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "WeChatTheme":
+        config = data.get("config")
+        styles = {k: dict(v) for k, v in (data.get("styles") or {}).items()}
+        # 只给了设计变量时，即时编译成渲染器可用的样式
+        if config and not styles:
+            styles = compile_styles(config)
+        elif config:
+            config = merge_config(config)
         return cls(
             id=str(data["id"]),
             name=str(data.get("name") or data["id"]),
             description=str(data.get("description") or ""),
-            styles={k: dict(v) for k, v in (data.get("styles") or {}).items()},
+            styles=styles,
             options=dict(data.get("options") or {}),
+            config=config,
+            is_builtin=bool(data.get("is_builtin", False)),
         )
 
 
@@ -79,12 +114,15 @@ def get_theme(theme_id: str | None = None) -> WeChatTheme:
 
 
 def list_themes() -> list[WeChatTheme]:
-    """按注册顺序返回全部主题。"""
+    """按注册顺序返回全部内置 / 静态主题。"""
     return list(_REGISTRY.values())
 
 
 def load_theme_dir(directory: Path) -> list[str]:
-    """从目录加载 ``*.json`` 主题文件（可选扩展点），返回加载到的主题 id。"""
+    """从目录加载 ``*.json`` 主题文件（可选扩展点），返回加载到的主题 id。
+
+    JSON 可以只给 ``config``（设计变量），也可以给完整的 ``styles``。
+    """
     loaded: list[str] = []
     if not directory.is_dir():
         return loaded
@@ -103,259 +141,147 @@ def load_theme_dir(directory: Path) -> list[str]:
 
 
 # --------------------------------------------------------------------------
-# 内置主题：PaperHub Science（默认）+ PaperHub Minimal（第二套示例）
+# 内置主题（is_builtin = True，只读，不可删除）
 # --------------------------------------------------------------------------
 
-PAPERHUB_SCIENCE = WeChatTheme(
-    id=DEFAULT_THEME_ID,
-    name="PaperHub Science",
-    description="简洁、专业、现代的科研解读主题，适合 AI / 生物医学 / 论文解读。",
-    styles={
-        "article": {
-            "font-family": "-apple-system,BlinkMacSystemFont,'PingFang SC',"
-            "'Hiragino Sans GB','Microsoft YaHei',sans-serif",
-            "font-size": "16px",
-            "line-height": "1.8",
-            "color": "#1f2328",
-            "background-color": "#ffffff",
-            "letter-spacing": "0.2px",
-            "word-break": "break-word",
-        },
-        "h1": {
-            "font-size": "22px",
-            "font-weight": "700",
-            "color": "#0f172a",
-            "line-height": "1.4",
-            "margin": "28px 0 14px",
-        },
-        "h2": {
-            "font-size": "19px",
-            "font-weight": "700",
-            "color": "#0f172a",
-            "line-height": "1.5",
-            "margin": "26px 0 12px",
-            "padding-left": "10px",
-            "border-left": "4px solid #2563eb",
-        },
-        "h3": {
-            "font-size": "17px",
-            "font-weight": "600",
-            "color": "#1e293b",
-            "line-height": "1.5",
-            "margin": "20px 0 8px",
-        },
-        "paragraph": {
-            "font-size": "16px",
-            "line-height": "1.8",
-            "color": "#334155",
-            "margin": "0 0 16px",
-        },
-        "blockquote": {
-            "margin": "0 0 16px",
-            "padding": "12px 16px",
-            "background-color": "#f8fafc",
-            "border-left": "3px solid #93c5fd",
-            "color": "#475569",
-            "font-size": "15px",
-            "line-height": "1.7",
-            "border-radius": "0 6px 6px 0",
-        },
-        "image": {
-            "display": "block",
-            "width": "100%",
-            "max-width": "100%",
-            "height": "auto",
-            "margin": "18px auto 6px",
-            "border-radius": "8px",
-        },
-        "caption": {
-            "font-size": "13px",
-            "color": "#94a3b8",
-            "text-align": "center",
-            "line-height": "1.6",
-            "margin": "0 0 18px",
-        },
-        "ul": {"margin": "0 0 16px", "padding-left": "22px"},
-        "ol": {"margin": "0 0 16px", "padding-left": "22px"},
-        "li": {
-            "font-size": "16px",
-            "line-height": "1.8",
-            "color": "#334155",
-            "margin": "0 0 6px",
-        },
-        "hr": {
-            "border": "none",
-            "border-top": "1px solid #e2e8f0",
-            "margin": "24px 0",
-        },
-        "link": {
-            "color": "#2563eb",
-            "text-decoration": "none",
-            "border-bottom": "1px solid #bfdbfe",
-        },
-        "strong": {"font-weight": "600", "color": "#0f172a"},
-        "em": {"font-style": "italic", "color": "#475569"},
-        "code": {
-            "background-color": "#f1f5f9",
-            "color": "#be123c",
-            "padding": "2px 5px",
-            "border-radius": "4px",
-            "font-size": "14px",
-            "font-family": "Menlo,Consolas,monospace",
-        },
-        "pre": {
-            "background-color": "#0f172a",
-            "color": "#e2e8f0",
-            "padding": "14px 16px",
-            "border-radius": "8px",
-            "font-size": "13px",
-            "line-height": "1.6",
-            "overflow-x": "auto",
-            "margin": "0 0 16px",
-        },
-        "table": {
-            "width": "100%",
-            "border-collapse": "collapse",
-            "margin": "0 0 16px",
-            "font-size": "14px",
-        },
-        "th": {
-            "border": "1px solid #e2e8f0",
-            "background-color": "#f8fafc",
-            "padding": "8px 10px",
-            "text-align": "left",
-            "font-weight": "600",
-            "color": "#0f172a",
-        },
-        "td": {
-            "border": "1px solid #e2e8f0",
-            "padding": "8px 10px",
-            "text-align": "left",
-            "color": "#334155",
-        },
-    },
-)
+def _builtin(
+    theme_id: str,
+    name: str,
+    description: str,
+    config: dict[str, Any],
+) -> WeChatTheme:
+    merged = merge_config(config)
+    return WeChatTheme(
+        id=theme_id,
+        name=name,
+        description=description,
+        styles=compile_styles(merged),
+        options={},
+        config=merged,
+        is_builtin=True,
+    )
 
-PAPERHUB_MINIMAL = WeChatTheme(
-    id="paperhub-minimal",
-    name="PaperHub Minimal",
-    description="极简黑白主题，去掉强调色，适合以文字为主的快讯 / 摘要。",
-    styles={
-        "article": {
-            "font-family": "-apple-system,BlinkMacSystemFont,'PingFang SC',"
-            "'Microsoft YaHei',sans-serif",
-            "font-size": "16px",
-            "line-height": "1.75",
-            "color": "#262626",
-            "background-color": "#ffffff",
-        },
-        "h1": {
-            "font-size": "21px",
-            "font-weight": "700",
-            "color": "#111111",
-            "margin": "24px 0 12px",
-            "line-height": "1.4",
-        },
-        "h2": {
-            "font-size": "18px",
-            "font-weight": "700",
-            "color": "#111111",
-            "margin": "22px 0 10px",
-            "line-height": "1.5",
-        },
-        "h3": {
-            "font-size": "16px",
-            "font-weight": "600",
-            "color": "#333333",
-            "margin": "18px 0 8px",
-            "line-height": "1.5",
-        },
-        "paragraph": {
-            "font-size": "16px",
-            "line-height": "1.75",
-            "color": "#404040",
-            "margin": "0 0 14px",
-        },
-        "blockquote": {
-            "margin": "0 0 14px",
-            "padding": "10px 14px",
-            "background-color": "#f5f5f5",
-            "color": "#595959",
-            "font-size": "15px",
-            "line-height": "1.7",
-        },
-        "image": {
-            "display": "block",
-            "width": "100%",
-            "max-width": "100%",
-            "height": "auto",
-            "margin": "16px auto 6px",
-        },
-        "caption": {
-            "font-size": "13px",
-            "color": "#8c8c8c",
-            "text-align": "center",
-            "line-height": "1.6",
-            "margin": "0 0 16px",
-        },
-        "ul": {"margin": "0 0 14px", "padding-left": "20px"},
-        "ol": {"margin": "0 0 14px", "padding-left": "20px"},
-        "li": {
-            "font-size": "16px",
-            "line-height": "1.75",
-            "color": "#404040",
-            "margin": "0 0 5px",
-        },
-        "hr": {
-            "border": "none",
-            "border-top": "1px solid #e5e5e5",
-            "margin": "22px 0",
-        },
-        "link": {"color": "#1a1a1a", "text-decoration": "underline"},
-        "strong": {"font-weight": "600", "color": "#111111"},
-        "em": {"font-style": "italic", "color": "#595959"},
-        "code": {
-            "background-color": "#f5f5f5",
-            "color": "#262626",
-            "padding": "2px 5px",
-            "border-radius": "3px",
-            "font-size": "14px",
-            "font-family": "Menlo,Consolas,monospace",
-        },
-        "pre": {
-            "background-color": "#f5f5f5",
-            "color": "#262626",
-            "padding": "14px 16px",
-            "border-radius": "6px",
-            "font-size": "13px",
-            "line-height": "1.6",
-            "overflow-x": "auto",
-            "margin": "0 0 14px",
-        },
-        "table": {
-            "width": "100%",
-            "border-collapse": "collapse",
-            "margin": "0 0 14px",
-            "font-size": "14px",
-        },
-        "th": {
-            "border": "1px solid #e5e5e5",
-            "background-color": "#fafafa",
-            "padding": "8px 10px",
-            "text-align": "left",
-            "font-weight": "600",
-        },
-        "td": {
-            "border": "1px solid #e5e5e5",
-            "padding": "8px 10px",
-            "text-align": "left",
-            "color": "#404040",
-        },
-    },
-)
 
-register_theme(PAPERHUB_SCIENCE)
-register_theme(PAPERHUB_MINIMAL)
+BUILTIN_THEMES: list[WeChatTheme] = [
+    _builtin(
+        DEFAULT_THEME_ID,
+        "PaperHub Science",
+        "简洁、专业、现代的科研解读主题，适合 AI / 生物医学 / 论文解读。",
+        {
+            "colors": {
+                "primary": "#2563EB",
+                "secondary": "#475569",
+                "text": "#1E293B",
+                "muted": "#94A3B8",
+                "background": "#FFFFFF",
+                "border": "#E2E8F0",
+            },
+            "typography": {
+                "bodySize": "16px",
+                "bodyLineHeight": "1.8",
+                "heading1Size": "22px",
+                "heading2Size": "19px",
+                "heading3Size": "17px",
+                "captionSize": "13px",
+            },
+        },
+    ),
+    _builtin(
+        "paperhub-minimal",
+        "PaperHub Minimal",
+        "极简黑白主题，去掉强调色，适合以文字为主的快讯 / 摘要。",
+        {
+            "colors": {
+                "primary": "#1A1A1A",
+                "secondary": "#595959",
+                "text": "#262626",
+                "muted": "#8C8C8C",
+                "background": "#FFFFFF",
+                "border": "#E5E5E5",
+            },
+            "typography": {
+                "bodySize": "16px",
+                "bodyLineHeight": "1.75",
+                "heading1Size": "21px",
+                "heading2Size": "18px",
+                "heading3Size": "16px",
+                "captionSize": "13px",
+            },
+        },
+    ),
+    _builtin(
+        "paperhub-academic-blue",
+        "Academic Blue",
+        "经典学术蓝，适合科研论文、AI、生物医学等严肃主题。",
+        {
+            "colors": {
+                "primary": "#1D4ED8",
+                "secondary": "#475569",
+                "text": "#0F172A",
+                "muted": "#64748B",
+                "background": "#FFFFFF",
+                "border": "#DBEAFE",
+            },
+            "typography": {
+                "bodySize": "15px",
+                "bodyLineHeight": "1.8",
+                "heading1Size": "24px",
+                "heading2Size": "19px",
+                "heading3Size": "17px",
+                "captionSize": "13px",
+            },
+        },
+    ),
+    _builtin(
+        "paperhub-nature",
+        "Nature Green",
+        "自然青绿配色，适合生命科学、生态、医学方向的解读。",
+        {
+            "colors": {
+                "primary": "#15803D",
+                "secondary": "#4B6355",
+                "text": "#1C2B21",
+                "muted": "#6B7F72",
+                "background": "#FFFFFF",
+                "border": "#DCFCE7",
+            },
+            "typography": {
+                "bodySize": "15px",
+                "bodyLineHeight": "1.8",
+                "heading1Size": "23px",
+                "heading2Size": "19px",
+                "heading3Size": "17px",
+                "captionSize": "13px",
+            },
+        },
+    ),
+    _builtin(
+        "paperhub-warm",
+        "Warm Reading",
+        "暖色阅读主题，米色背景 + 琥珀强调，适合长文精读。",
+        {
+            "colors": {
+                "primary": "#B45309",
+                "secondary": "#7C5C3E",
+                "text": "#3F2D20",
+                "muted": "#9A7B5F",
+                "background": "#FFFBF5",
+                "border": "#FDE68A",
+            },
+            "typography": {
+                "bodySize": "15px",
+                "bodyLineHeight": "1.85",
+                "heading1Size": "23px",
+                "heading2Size": "19px",
+                "heading3Size": "17px",
+                "captionSize": "13px",
+            },
+        },
+    ),
+]
+
+for _theme in BUILTIN_THEMES:
+    register_theme(_theme)
 
 # 可选：从 publishers/wechat/themes/*.json 加载第三方主题
 load_theme_dir(Path(__file__).resolve().parent / "themes")
