@@ -17,6 +17,7 @@ from app.core.redis import get_arq_pool
 from app.services import article as article_service
 from app.services import chat
 from app.services import paper as paper_service
+from app.services import prompt as prompt_service
 from app.services.figures import group_figure_numbers, parse_figure_refs
 from app.services.llm import get_llm_service
 from app.services.mineru import get_mineru_service
@@ -303,18 +304,23 @@ def _page_from_key(key: str) -> int | None:
 
 
 async def analyze_paper(
-    ctx: dict, paper_id: str, job_id: str, skill: str = "paper-summary"
+    ctx: dict, paper_id: str, job_id: str, skill: str = ""
 ) -> dict:
     t0 = time.perf_counter()
     await _set_job(job_id, start=True, progress=5)
     await _set_paper_status(paper_id, models.PaperStatus.ANALYZING)
     try:
         async with async_session_factory() as session:
+            # 设置页保存的「AI 分析」配置：默认 Skill + 自定义提示词
+            skill_name, extra_prompt = await prompt_service.resolve_for_analysis(
+                session, skill
+            )
             messages = await chat.build_messages(
                 session,
                 "请按照 Skill 要求完成这篇论文的完整分析。",
                 paper_id=paper_id,
-                skill_name=skill,
+                skill_name=skill_name,
+                extra_system=extra_prompt,
             )
             llm = get_llm_service()
             text = await llm.complete(messages)
@@ -337,9 +343,11 @@ async def analyze_paper(
             paper_id=paper_id,
             job_id=job_id,
             task="analyze",
+            skill=skill_name,
+            custom_prompt=bool(extra_prompt),
             duration=round(time.perf_counter() - t0, 3),
         )
-        return {"paper_id": paper_id, "status": "success"}
+        return {"paper_id": paper_id, "status": "success", "skill": skill_name}
     except Exception as e:  # noqa: BLE001
         await _set_job(
             job_id, status=models.JobStatus.FAILED, error=str(e), finish=True

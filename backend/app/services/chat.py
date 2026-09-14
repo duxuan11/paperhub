@@ -33,6 +33,7 @@ async def build_messages(
     *,
     paper_id: str | None = None,
     skill_name: str | None = None,
+    extra_system: str | None = None,
     history: list[dict[str, str]] | None = None,
 ) -> list[dict]:
     messages: list[dict] = [{"role": "system", "content": BASE_SYSTEM}]
@@ -60,6 +61,9 @@ async def build_messages(
         skill = load_skill(skill_name)
         if skill:
             messages[0]["content"] += "\n\n请遵循以下 Skill 要求：\n" + skill.prompt
+
+    if extra_system and extra_system.strip():
+        messages[0]["content"] += "\n\n用户自定义要求（优先级高于上面的通用规则）：\n" + extra_system.strip()
 
     for h in (history or [])[-10:]:
         role = h.get("role")

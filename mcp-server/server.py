@@ -1,11 +1,18 @@
 """PaperHub MCP Server —— 让 Open WebUI / Claude 等 Agent 访问论文库。
 
-通过 stdio 传输运行；配置环境变量 PAPERHUB_API_URL / PAPERHUB_API_KEY 指向后端。
+传输方式由环境变量 MCP_TRANSPORT 决定（stdio / sse / streamable-http，默认 stdio）。
+配置环境变量 PAPERHUB_API_URL / PAPERHUB_API_KEY 指向后端。
+
+- stdio：由 MCP 客户端（Open WebUI / Claude 等）通过管道拉起。
+- streamable-http：常驻 HTTP 服务，监听 MCP_HOST:MCP_PORT，路径 MCP_PATH（默认 /mcp）。
+
+因此在 docker-compose 中作为常驻服务运行时，需设置 MCP_TRANSPORT=streamable-http。
 """
 
 from __future__ import annotations
 
 import json
+import os
 
 from mcp.server.mcpserver import MCPServer
 
@@ -115,5 +122,34 @@ async def publish_wechat(article_id: str) -> str:
     return f"已提交草稿箱任务: record_id={resp.get('record_id')}, status={resp.get('status')}"
 
 
+def _run() -> None:
+    transport = os.environ.get("MCP_TRANSPORT", "stdio").lower()
+    if transport == "stdio":
+        mcp.run("stdio")
+        return
+
+    host = os.environ.get("MCP_HOST", "0.0.0.0")
+    port = int(os.environ.get("MCP_PORT", "8001"))
+    if transport == "sse":
+        mcp.run(
+            "sse",
+            host=host,
+            port=port,
+            sse_path=os.environ.get("MCP_PATH", "/sse"),
+        )
+        return
+    if transport == "streamable-http":
+        mcp.run(
+            "streamable-http",
+            host=host,
+            port=port,
+            streamable_http_path=os.environ.get("MCP_PATH", "/mcp"),
+        )
+        return
+    raise SystemExit(
+        f"未知的 MCP_TRANSPORT: {transport!r}（可选 stdio / sse / streamable-http）"
+    )
+
+
 if __name__ == "__main__":
-    mcp.run()
+    _run()

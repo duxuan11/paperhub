@@ -176,6 +176,18 @@ class Article(Base):
     )
 
 
+class AppSetting(Base):
+    """键值型应用配置（AI 分析提示词等，可在设置页热更新）。"""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class PublishRecord(Base):
     __tablename__ = "publish_records"
 

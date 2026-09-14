@@ -3,7 +3,7 @@ const PROXY = "/api/proxy";
 
 export async function apiGet<T = any>(path: string): Promise<T> {
   const r = await fetch(`${PROXY}${path}`);
-  if (!r.ok) throw new Error(`请求失败 ${r.status}: ${await safeText(r)}`);
+  if (!r.ok) throw new Error(await errorMessage(r));
   return r.json();
 }
 
@@ -13,7 +13,7 @@ export async function apiPost<T = any>(path: string, body?: any): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!r.ok) throw new Error(`请求失败 ${r.status}: ${await safeText(r)}`);
+  if (!r.ok) throw new Error(await errorMessage(r));
   return r.json();
 }
 
@@ -23,7 +23,17 @@ export async function apiPatch<T = any>(path: string, body?: any): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!r.ok) throw new Error(`请求失败 ${r.status}: ${await safeText(r)}`);
+  if (!r.ok) throw new Error(await errorMessage(r));
+  return r.json();
+}
+
+export async function apiPut<T = any>(path: string, body?: any): Promise<T> {
+  const r = await fetch(`${PROXY}${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) throw new Error(await errorMessage(r));
   return r.json();
 }
 
@@ -31,7 +41,7 @@ export async function apiUploadFiles(files: File[]): Promise<any[]> {
   const fd = new FormData();
   files.forEach((f) => fd.append("files", f));
   const r = await fetch(`${PROXY}/papers/batch-upload`, { method: "POST", body: fd });
-  if (!r.ok) throw new Error(`上传失败 ${r.status}: ${await safeText(r)}`);
+  if (!r.ok) throw new Error(await errorMessage(r));
   return r.json();
 }
 
@@ -39,12 +49,18 @@ export function fileUrl(key: string): string {
   return `${PROXY}/files/${encodeURIComponent(key)}`;
 }
 
-async function safeText(r: Response): Promise<string> {
+async function errorMessage(r: Response): Promise<string> {
   try {
     const t = await r.text();
-    return t.slice(0, 200);
+    try {
+      const data = JSON.parse(t);
+      if (typeof data?.detail === "string" && data.detail) return data.detail;
+    } catch {
+      // 非 JSON 响应，回退原文
+    }
+    return `请求失败 ${r.status}: ${t.slice(0, 200)}`;
   } catch {
-    return "";
+    return `请求失败 ${r.status}`;
   }
 }
 

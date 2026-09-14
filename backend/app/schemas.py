@@ -96,7 +96,27 @@ class GenerateArticleRequest(BaseModel):
 
 
 class AnalyzeRequest(BaseModel):
-    skill: str = "paper-summary"
+    skill: str | None = None
+
+
+class SkillDetail(BaseModel):
+    name: str
+    description: str = ""
+    tools: list[str] = Field(default_factory=list)
+    prompt: str = ""
+
+
+class AnalysisPromptOut(BaseModel):
+    skill: str
+    prompt: str = ""
+    default_skill: str
+    default_prompt: str
+    skills: list[SkillDetail] = Field(default_factory=list)
+
+
+class AnalysisPromptUpdate(BaseModel):
+    skill: str | None = None
+    prompt: str | None = None
 
 
 class ChatRequest(BaseModel):

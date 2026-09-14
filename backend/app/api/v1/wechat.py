@@ -3,19 +3,23 @@
 推送是异步的（Arq 任务），接口只负责落一条 PublishRecord + 入队，
 真实结果通过 GET /wechat/records 查询（前端轮询该接口拿成功/失败与错误原因）。
 """
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import models, repositories, schemas
+from app.api.v1.guards import ensure_no_active_job
 from app.core.database import get_session
 from app.core.security import require_auth
 from app.schemas import WeChatRequest, WeChatDraftOut
 from app.services.wechat import get_publisher
 from app.workers import enqueue
 
-router = APIRouter(prefix="/api/v1/wechat", tags=["wechat"], dependencies=[Depends(require_auth)])
+router = APIRouter(
+    prefix="/api/v1/wechat", tags=["wechat"], dependencies=[Depends(require_auth)]
+)
 
 
 async def _submit(
@@ -24,6 +28,8 @@ async def _submit(
     art = await repositories.get_article(session, req.article_id)
     if not art:
         raise HTTPException(status_code=404, detail="文章不存在")
+
+    await ensure_no_active_job(session, art.paper_id, "publish_wechat", "发布")
 
     rec = models.PublishRecord(
         article_id=req.article_id,
