@@ -46,11 +46,63 @@ export interface Article {
   html: string | null;
   style: string | null;
   skill: string | null;
+  author: string | null;
+  theme: string | null;
+  cover_image: string | null;
   images: string[] | null;
   references: string[] | null;
   status: string;
   created_at: string | null;
   updated_at: string | null;
+}
+
+/** 单个元素的 inline style：CSS 属性 -> 值 */
+export interface WechatThemeStyle {
+  [prop: string]: string;
+}
+
+/** 主题配色设计变量 */
+export interface WechatThemeColors {
+  primary: string;
+  secondary: string;
+  text: string;
+  muted: string;
+  background: string;
+  border: string;
+}
+
+/** 主题字体排版设计变量 */
+export interface WechatThemeTypography {
+  fontFamily?: string | null;
+  bodySize: string;
+  bodyLineHeight: string;
+  heading1Size: string;
+  heading2Size: string;
+  heading3Size: string;
+  captionSize: string;
+}
+
+/** 主题设计变量：配色 + 字体排版 + 组件级 CSS 覆盖 */
+export interface WechatThemeConfig {
+  colors: WechatThemeColors;
+  typography: WechatThemeTypography;
+  components: Record<string, WechatThemeStyle>;
+}
+
+/** 公众号主题（由后端 /wechat/themes 提供，前端据此实时渲染预览） */
+export interface WechatTheme {
+  id: string;
+  name: string;
+  description?: string;
+  /** 设计变量（编辑用） */
+  config?: WechatThemeConfig;
+  /** 编译后的元素样式（渲染用，与后端一致） */
+  styles: Record<string, WechatThemeStyle>;
+  options?: Record<string, unknown>;
+  is_builtin?: boolean;
+  is_default?: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 export interface PublishRecord {

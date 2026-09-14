@@ -19,6 +19,12 @@ from publishers.wechat.publisher import (  # noqa: E402
     MockWeChatPublisher,
     build_article_payload,
 )
+from publishers.wechat.themes import (  # noqa: E402
+    DEFAULT_THEME_ID,
+    WeChatTheme,
+    get_theme,
+    list_themes,
+)
 
 __all__ = [
     "DraftResult",
@@ -28,6 +34,10 @@ __all__ = [
     "MockWeChatPublisher",
     "build_article_payload",
     "get_publisher",
+    "DEFAULT_THEME_ID",
+    "WeChatTheme",
+    "get_theme",
+    "list_themes",
 ]
 
 

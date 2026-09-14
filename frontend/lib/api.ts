@@ -37,10 +37,36 @@ export async function apiPut<T = any>(path: string, body?: any): Promise<T> {
   return r.json();
 }
 
+/** DELETE：后端成功返回 204 无正文，这里容忍空响应。 */
+export async function apiDelete<T = any>(path: string): Promise<T | null> {
+  const r = await fetch(`${PROXY}${path}`, { method: "DELETE" });
+  if (!r.ok) throw new Error(await errorMessage(r));
+  if (r.status === 204) return null;
+  const text = await r.text();
+  return text ? (JSON.parse(text) as T) : null;
+}
+
 export async function apiUploadFiles(files: File[]): Promise<any[]> {
   const fd = new FormData();
   files.forEach((f) => fd.append("files", f));
   const r = await fetch(`${PROXY}/papers/batch-upload`, { method: "POST", body: fd });
+  if (!r.ok) throw new Error(await errorMessage(r));
+  return r.json();
+}
+
+export async function apiUploadCover(articleId: string, file: File): Promise<any> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const r = await fetch(`${PROXY}/articles/${articleId}/cover`, {
+    method: "POST",
+    body: fd,
+  });
+  if (!r.ok) throw new Error(await errorMessage(r));
+  return r.json();
+}
+
+export async function apiDeleteCover(articleId: string): Promise<any> {
+  const r = await fetch(`${PROXY}/articles/${articleId}/cover`, { method: "DELETE" });
   if (!r.ok) throw new Error(await errorMessage(r));
   return r.json();
 }

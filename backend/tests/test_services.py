@@ -69,11 +69,14 @@ def test_wechat_formatter():
 
     md = "# Title\n\n> intro\n\n- a\n- b\n\n**bold** and `code`\n\n![x]({{figure:0}})"
     html = markdown_to_wechat_html(md, {"{{figure:0}}": "http://img"})
-    assert "<h2>Title</h2>" in html
-    assert "<blockquote>intro</blockquote>" in html
-    assert "<ul>" in html
-    assert "<strong>bold</strong>" in html
+    # 现在是 Theme 驱动的 inline style 输出：标题按层级映射为 h1，样式不依赖外部 CSS
+    assert "<h1" in html and ">Title</h1>" in html
+    assert "<blockquote" in html and ">intro</blockquote>" in html
+    assert "<ul" in html
+    assert "<strong" in html and ">bold</strong>" in html
     assert '<img src="http://img"' in html
+    assert 'style="' in html
+    assert "<style" not in html
 
 
 def test_skill_loader():

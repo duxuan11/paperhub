@@ -2,6 +2,8 @@
 
 推送是异步的（Arq 任务），接口只负责落一条 PublishRecord + 入队，
 真实结果通过 GET /wechat/records 查询（前端轮询该接口拿成功/失败与错误原因）。
+
+主题（Theme）的 CRUD 见 ``app.api.v1.wechat_themes``。
 """
 
 from __future__ import annotations

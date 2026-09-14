@@ -23,6 +23,7 @@ from app.services.llm import get_llm_service
 from app.services.mineru import get_mineru_service
 from app.services.skill import load_skill
 from app.services.wechat import build_article_payload, get_publisher
+from app.services import wechat_theme as wechat_theme_service
 from app.services.yolo import (
     HeuristicFigureService,
     RENDER_ZOOM,
@@ -405,9 +406,14 @@ async def generate_wechat_article(
         return {"paper_id": paper_id, "status": "failed", "error": str(e)}
 
 
-def _cover_source(images: list[str]) -> tuple[bytes, str]:
-    """选封面素材：优先文章首图，没有可用配图时用生成的渐变封面。"""
-    for key in images:
+def _cover_source(
+    images: list[str], cover_image: str | None = None
+) -> tuple[bytes, str]:
+    """选封面素材：文章显式封面 > 文章首图 > 内置渐变封面。"""
+    candidates = ([cover_image] if cover_image else []) + list(images)
+    for key in candidates:
+        if not key:
+            continue
         data = storage.get_bytes(key)
         if data:
             return data, key.rsplit("/", 1)[-1]
@@ -435,16 +441,8 @@ async def _upload_content_images(publisher, images: list[str]) -> dict[str, str]
     return mapping
 
 
-async def _ensure_thumb_media_id(publisher, images: list[str]) -> str:
-    """草稿封面 thumb_media_id（图文草稿必填，否则 draft/add 报 40007）。
-
-    优先使用配置的 WECHAT_THUMB_MEDIA_ID；否则上传文章首图（无配图则用默认封面）
-    作为永久素材，并把 media_id 缓存到 Redis，避免每次推送重复上传。
-    """
-    if settings.wechat_thumb_media_id:
-        return settings.wechat_thumb_media_id
-
-    data, filename = _cover_source(images)
+async def _upload_cover_cached(publisher, data: bytes, filename: str) -> str:
+    """上传封面永久素材，并按内容哈希缓存 media_id，避免重复上传。"""
     cache_key = f"wechat:cover:{hashlib.sha1(data).hexdigest()[:16]}"
     pool = None
     try:
@@ -462,6 +460,34 @@ async def _ensure_thumb_media_id(publisher, images: list[str]) -> str:
         except Exception as e:  # noqa: BLE001
             log.warning("封面 media_id 缓存写入失败: %s", e)
     return media_id
+
+
+async def _ensure_thumb_media_id(
+    publisher, images: list[str], cover_image: str | None = None
+) -> str:
+    """草稿封面 thumb_media_id（图文草稿必填，否则 draft/add 报 40007）。
+
+    优先级：
+    1. 文章显式配置的封面（用户在编辑器里上传/选择的 cover_image）；
+    2. 全局配置的 WECHAT_THUMB_MEDIA_ID；
+    3. 文章首图；
+    4. 内置渐变封面。
+
+    media_id 按封面内容哈希缓存到 Redis，避免每次推送重复上传。
+    """
+    if cover_image:
+        data = storage.get_bytes(cover_image)
+        if data:
+            return await _upload_cover_cached(
+                publisher, data, cover_image.rsplit("/", 1)[-1]
+            )
+        log.warning("文章封面读取失败，回退默认封面选择: %s", cover_image)
+
+    if settings.wechat_thumb_media_id:
+        return settings.wechat_thumb_media_id
+
+    data, filename = _cover_source(images)
+    return await _upload_cover_cached(publisher, data, filename)
 
 
 async def _create_publish_record(article_id: str) -> str:
@@ -561,12 +587,23 @@ async def publish_wechat_article(
             content = art.content or ""
             images = list(art.images or [])
             digest = art.summary or ""
+            author = getattr(art, "author", None) or "PaperHub"
+            theme_id = getattr(art, "theme", None)
+            cover_image = getattr(art, "cover_image", None)
+            # 主题从数据库解析（内置主题亦有行），因此用户自定义主题无需重启 Worker
+            theme_obj = await wechat_theme_service.resolve_theme(session, theme_id)
 
         await _set_job(job_id, progress=20)
         image_map = await _upload_content_images(publisher, images)
-        thumb_media_id = await _ensure_thumb_media_id(publisher, images)
+        thumb_media_id = await _ensure_thumb_media_id(publisher, images, cover_image)
         payload = build_article_payload(
-            title, content, image_map, thumb_media_id=thumb_media_id, digest=digest
+            title,
+            content,
+            image_map,
+            thumb_media_id=thumb_media_id,
+            author=author,
+            digest=digest,
+            theme=theme_obj,
         )
         await _set_job(job_id, progress=45)
 
