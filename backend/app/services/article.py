@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import models, repositories
 from app.core.logging import get_logger
 from app.core.minio import storage
+from app.services.analysis import combine_results
 from app.services.chat import BASE_SYSTEM
 from app.services.llm import get_llm_service
 from app.services.skill import load_skill
@@ -63,6 +64,43 @@ def _extract_references(md: str) -> list[str]:
     return refs[:20]
 
 
+_ARTICLE_INSTRUCTION = (
+    "请生成完整的微信公众号文章（Markdown 格式），必须包含：# 标题、> 导语、"
+    "正文（多级标题）、关键图示（用 ![]({{figure:N}} 占位，N 从 0 开始）、"
+    "论文来源、参考文献。"
+)
+
+
+def _build_source(
+    title: str,
+    md_text: str,
+    fig_lines: str,
+    *,
+    analysis_text: str = "",
+) -> str:
+    """组装公众号生成用的用户提示。
+
+    若已有 AI 分析结果（AIAnalysisResult），则优先作为生成依据，避免从 PDF/原文
+    重新分析；Markdown 仅作为补充参考保留。
+    """
+    parts = [f"论文标题：{title}"]
+    if (analysis_text or "").strip():
+        parts.append(
+            "论文 AI 分析结果（优先依据，已基于 MinerU 解析结果生成，无需重新分析原文）：\n"
+            "<ai_analysis>\n" + analysis_text[:40000] + "\n</ai_analysis>"
+        )
+    parts.append(
+        "论文 Markdown（补充参考）：\n<paper_markdown>\n"
+        + md_text[:40000]
+        + "\n</paper_markdown>"
+    )
+    parts.append(
+        "论文中的 Figure 列表：\n<figures>\n" + (fig_lines or "无") + "\n</figures>"
+    )
+    parts.append(_ARTICLE_INSTRUCTION)
+    return "\n\n".join(parts)
+
+
 async def generate_article(
     session: AsyncSession,
     paper_id: str,
@@ -85,6 +123,9 @@ async def generate_article(
     fig_lines = "\n".join(
         f"- Figure {f.figure_number}: {f.caption or '（无标题）'}" for f in figures
     )
+    # 若已有 AI 分析结果，公众号文章直接以其为上游，避免重复分析
+    results = await repositories.list_analysis_results(session, paper_id)
+    analysis_text = combine_results([(r.skill, r.content or "") for r in results])
 
     skill = load_skill(skill_name) or load_skill("wechat-article")
     system = (
@@ -96,12 +137,11 @@ async def generate_article(
     if extra_instructions:
         system += f"\n额外要求：{extra_instructions}"
 
-    user = (
-        f"论文标题：{paper.title or paper.filename or '未命名'}\n\n"
-        f"论文 Markdown：\n<paper_markdown>\n{md_text[:40000]}\n</paper_markdown>\n\n"
-        f"论文中的 Figure 列表：\n<figures>\n{fig_lines or '无'}\n</figures>\n\n"
-        f"请生成完整的微信公众号文章（Markdown 格式），必须包含：# 标题、> 导语、正文（多级标题）、"
-        f"关键图示（用 ![]({{{{figure:N}}}} 占位，N 从 0 开始）、论文来源、参考文献。"
+    user = _build_source(
+        paper.title or paper.filename or "未命名",
+        md_text,
+        fig_lines,
+        analysis_text=analysis_text,
     )
 
     llm = get_llm_service()

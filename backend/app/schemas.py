@@ -209,6 +209,49 @@ class AnalysisPromptUpdate(BaseModel):
     prompt: str | None = None
 
 
+# ---- AI 分析（Skills + Model + Prompt） ----
+class AIAnalysisConfigOut(BaseModel):
+    paper_id: str
+    enabled: bool = True
+    model: str = ""
+    selected_skills: list[str] = Field(default_factory=list)
+    custom_prompt: str = ""
+    default_model: str = ""
+    default_skills: list[str] = Field(default_factory=list)
+    available_skills: list[SkillDetail] = Field(default_factory=list)
+    updated_at: datetime | None = None
+
+
+class AIAnalysisConfigUpdate(BaseModel):
+    enabled: bool | None = None
+    model: str | None = None
+    selected_skills: list[str] | None = None
+    custom_prompt: str | None = None
+
+
+class AIAnalysisRunRequest(AIAnalysisConfigUpdate):
+    """可选的运行参数：先保存这些配置，再执行分析。"""
+
+
+class AIAnalysisResultOut(BaseModel):
+    paper_id: str
+    skill: str
+    content: str = ""
+    model: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class AIAnalysisOut(BaseModel):
+    paper_id: str
+    parsed: bool = False
+    config: AIAnalysisConfigOut
+    results: list[AIAnalysisResultOut] = Field(default_factory=list)
+
+
 class ChatRequest(BaseModel):
     message: str
     paper_id: str | None = None

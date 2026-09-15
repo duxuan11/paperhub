@@ -13,8 +13,9 @@
 - 论文批量上传、管理、状态机跟踪
 - PDF → MinerU 解析 → 结构化 Markdown + 图片
 - YOLO Figure 检测（可配置模型 / 无模型时启发式降级）
-- 三栏论文阅读器（目录 / Markdown / AI Chat）
-- AI Chat（OpenAI-compatible，默认 DeepSeek，无 Key 时 Mock）
+- 三栏论文阅读器（目录 / Markdown / AI 助手问答）
+- AI 分析：论文级配置 Skills / Model / Custom Prompt，基于 MinerU 结果逐 Skill 生成结构化结果
+- AI Chat（自由问答 + 阅读器内论文问答；OpenAI-compatible，默认 DeepSeek，无 Key 时 Mock）
 - Skill 系统（paper-summary / figure-analysis / wechat-article / 等）
 - 微信公众号文章生成（5 种模板）+ 三栏编辑器
 - 微信公众号草稿箱发布（安全设计：默认不直接发布）
@@ -268,7 +269,10 @@ GET    /papers                        # 列表
 GET    /papers/{id}                   # 详情
 GET    /papers/{id}/markdown          # Markdown
 GET    /papers/{id}/figures           # Figure 列表
-GET    /papers/{id}/analysis          # AI 分析结果
+GET    /papers/{id}/analysis          # AI 分析汇总文本（兼容）
+GET    /papers/{id}/ai-analysis       # AI 分析配置 + 分 Skill 结果
+PUT    /papers/{id}/ai-analysis/config # 保存 Skills/Model/Prompt 配置
+POST   /papers/{id}/ai-analysis/run   # 执行 AI 分析（需 MinerU 已解析）
 POST   /papers/{id}/parse             # 重新解析
 POST   /papers/{id}/detect-figures    # 重新检测
 POST   /papers/{id}/analyze           # AI 分析
