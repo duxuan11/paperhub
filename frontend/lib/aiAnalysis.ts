@@ -80,3 +80,23 @@ export function skillLabel(
     description: found?.description || "",
   };
 }
+
+/** Skill 名称规则，与后端 skill_registry.NAME_PATTERN 保持一致。 */
+export const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/** 校验自定义 Skill 名称（小写字母/数字/连字符，字母或数字开头，≤64）。 */
+export function isValidSkillName(name: string): boolean {
+  return SKILL_NAME_RE.test((name || "").trim());
+}
+
+/** 工具列表（逗号 / 空格分隔）<-> 字符串，供编辑器输入。 */
+export function toolsToText(tools: string[] | undefined): string {
+  return (tools || []).join(", ");
+}
+
+export function textToTools(text: string): string[] {
+  return (text || "")
+    .split(/[,，\s]+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+}

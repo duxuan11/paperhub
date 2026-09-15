@@ -13,6 +13,7 @@ from app.services.analysis import combine_results
 from app.services.chat import BASE_SYSTEM
 from app.services.llm import get_llm_service
 from app.services.skill import load_skill
+from app.services.skill_registry import load_registry
 
 log = get_logger("article")
 
@@ -127,7 +128,12 @@ async def generate_article(
     results = await repositories.list_analysis_results(session, paper_id)
     analysis_text = combine_results([(r.skill, r.content or "") for r in results])
 
-    skill = load_skill(skill_name) or load_skill("wechat-article")
+    # 自定义 Skill（DB）在同名时覆盖内置文件 Skill
+    registry = await load_registry(session)
+
+    skill = load_skill(skill_name, registry=registry) or load_skill(
+        "wechat-article", registry=registry
+    )
     system = (
         BASE_SYSTEM
         + "\n\n请按照以下 Skill 要求生成微信公众号文章：\n"

@@ -194,6 +194,26 @@ class SkillDetail(BaseModel):
     description: str = ""
     tools: list[str] = Field(default_factory=list)
     prompt: str = ""
+    source: str = "builtin"  # builtin | custom
+    is_builtin: bool = True
+    overrides_builtin: bool = False
+
+
+class SkillListOut(BaseModel):
+    skills: list[SkillDetail] = Field(default_factory=list)
+
+
+class SkillCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    description: str = ""
+    tools: list[str] = Field(default_factory=list)
+    prompt: str = ""
+
+
+class SkillUpdate(BaseModel):
+    description: str | None = None
+    tools: list[str] | None = None
+    prompt: str | None = None
 
 
 class AnalysisPromptOut(BaseModel):

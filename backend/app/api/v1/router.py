@@ -10,6 +10,7 @@ from app.api.v1 import (
     jobs,
     misc,
     papers,
+    skills,
     wechat,
     wechat_themes,
 )
@@ -17,6 +18,7 @@ from app.api.v1 import (
 api_router = APIRouter()
 api_router.include_router(papers.router)
 api_router.include_router(analysis.router)
+api_router.include_router(skills.router)
 api_router.include_router(jobs.router)
 api_router.include_router(articles.router)
 api_router.include_router(wechat.router)

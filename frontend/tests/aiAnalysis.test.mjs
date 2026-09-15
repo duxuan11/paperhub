@@ -9,9 +9,12 @@ import assert from "node:assert/strict";
 
 import {
   initialSelectedSkills,
+  isValidSkillName,
   normalizeSelectedSkills,
   orderResults,
   skillLabel,
+  textToTools,
+  toolsToText,
 } from "../lib/aiAnalysis.ts";
 
 const SKILLS = [
@@ -81,4 +84,29 @@ test("orderResults follows selection order and keeps extras", () => {
 test("skillLabel resolves description with fallback", () => {
   assert.equal(skillLabel("paper-summary", SKILLS).description, "结构化总结");
   assert.equal(skillLabel("unknown", SKILLS).description, "");
+});
+
+test("isValidSkillName mirrors the backend rule", () => {
+  for (const ok of ["my-skill", "skill2", "a", "a-b-c-1"]) {
+    assert.equal(isValidSkillName(ok), true, ok);
+  }
+  for (const bad of [
+    "",
+    "A",
+    "my skill",
+    "../etc",
+    "-lead",
+    "中文",
+    "a/b",
+    "a".repeat(65),
+  ]) {
+    assert.equal(isValidSkillName(bad), false, bad);
+  }
+});
+
+test("tools text round-trips", () => {
+  assert.equal(toolsToText(["get_paper", "get_figure"]), "get_paper, get_figure");
+  assert.deepEqual(textToTools("get_paper, get_figure"), ["get_paper", "get_figure"]);
+  assert.deepEqual(textToTools("a，b  c"), ["a", "b", "c"]);
+  assert.deepEqual(textToTools(""), []);
 });

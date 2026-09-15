@@ -20,6 +20,7 @@ from app.schemas import (
 )
 from app.services import analysis as analysis_service
 from app.services import prompt as prompt_service
+from app.services import skill_registry
 from app.workers import enqueue
 
 router = APIRouter(
@@ -27,7 +28,7 @@ router = APIRouter(
 )
 
 
-def _config_out(paper_id: str, config) -> AIAnalysisConfigOut:
+async def _config_out(session: AsyncSession, paper_id: str, config) -> AIAnalysisConfigOut:
     return AIAnalysisConfigOut(
         paper_id=paper_id,
         enabled=config.enabled if config else True,
@@ -36,7 +37,7 @@ def _config_out(paper_id: str, config) -> AIAnalysisConfigOut:
         custom_prompt=(config.custom_prompt if config else "") or "",
         default_model=settings.openai_model,
         default_skills=[prompt_service.DEFAULT_ANALYSIS_SKILL],
-        available_skills=prompt_service.skill_options(),
+        available_skills=await skill_registry.list_options(session),
         updated_at=config.updated_at if config else None,
     )
 
@@ -59,7 +60,7 @@ async def get_ai_analysis(
     return AIAnalysisOut(
         paper_id=paper_id,
         parsed=bool(paper.markdown_path),
-        config=_config_out(paper_id, config),
+        config=await _config_out(session, paper_id, config),
         results=[AIAnalysisResultOut.model_validate(r) for r in results],
     )
 
@@ -83,7 +84,7 @@ async def update_ai_analysis_config(
         custom_prompt=req.custom_prompt,
     )
     config = await analysis_service.get_config(session, paper_id)
-    return _config_out(paper_id, config)
+    return await _config_out(session, paper_id, config)
 
 
 @router.post("/papers/{paper_id}/ai-analysis/run", response_model=TaskEnqueueOut)

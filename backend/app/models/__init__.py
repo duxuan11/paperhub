@@ -247,6 +247,27 @@ class AppSetting(Base):
     )
 
 
+class CustomSkill(Base):
+    """用户自定义 Skill（内置 Skill 仍是 ``skills/<name>/SKILL.md`` 文件）。
+
+    ``name`` 与内置 Skill 同名时表示「覆盖内置」，加载时自定义优先；
+    删除自定义后内置内容自动恢复。
+    """
+
+    __tablename__ = "custom_skills"
+
+    name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tools: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class PublishRecord(Base):
     __tablename__ = "publish_records"
 

@@ -128,6 +128,19 @@ async def set_setting(session: AsyncSession, key: str, value: str | None) -> Non
     await session.commit()
 
 
+async def list_custom_skills(
+    session: AsyncSession,
+) -> Sequence[models.CustomSkill]:
+    stmt = select(models.CustomSkill).order_by(models.CustomSkill.created_at.asc())
+    return (await session.scalars(stmt)).all()
+
+
+async def get_custom_skill(
+    session: AsyncSession, name: str
+) -> models.CustomSkill | None:
+    return await session.get(models.CustomSkill, name)
+
+
 async def get_ai_analysis_config(
     session: AsyncSession, paper_id: str
 ) -> models.AIAnalysisConfig | None:

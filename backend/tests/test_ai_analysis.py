@@ -73,12 +73,11 @@ def test_resolve_plan_for_paper_explicit_skill_wins(monkeypatch):
             selected_skills=["figure-analysis"],
         )
 
+    async def fake_options(session):
+        return [{"name": "paper-summary"}, {"name": "figure-analysis"}]
+
     monkeypatch.setattr(service, "get_config", fake_config)
-    monkeypatch.setattr(
-        service.prompt_service,
-        "skill_options",
-        lambda: [{"name": "paper-summary"}, {"name": "figure-analysis"}],
-    )
+    monkeypatch.setattr(service.skill_registry, "list_options", fake_options)
     plan = run(
         service.resolve_plan_for_paper(None, "p1", explicit_skill="paper-summary")
     )
@@ -94,12 +93,11 @@ def test_resolve_plan_for_paper_uses_saved_selection_without_explicit(monkeypatc
             model="deepseek-reasoner",
         )
 
+    async def fake_options(session):
+        return [{"name": "paper-summary"}, {"name": "figure-analysis"}]
+
     monkeypatch.setattr(service, "get_config", fake_config)
-    monkeypatch.setattr(
-        service.prompt_service,
-        "skill_options",
-        lambda: [{"name": "paper-summary"}, {"name": "figure-analysis"}],
-    )
+    monkeypatch.setattr(service.skill_registry, "list_options", fake_options)
     plan = run(service.resolve_plan_for_paper(None, "p1"))
     assert plan.skills == ["figure-analysis"]
     assert plan.model == "deepseek-reasoner"
@@ -210,6 +208,11 @@ def test_run_analysis_calls_llm_once_per_skill_and_saves_results(monkeypatch):
     monkeypatch.setattr(service.repositories, "upsert_analysis_result", fake_upsert)
     monkeypatch.setattr(service.chat, "build_messages", fake_build_messages)
     monkeypatch.setattr(service, "get_llm_service", lambda: FakeLLM())
+
+    async def fake_registry(session):
+        return {}
+
+    monkeypatch.setattr(service.skill_registry, "load_registry", fake_registry)
     puts: list[str] = []
     monkeypatch.setattr(
         service.storage, "put_bytes", lambda key, data, ctype=None: puts.append(key)

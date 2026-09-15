@@ -26,6 +26,7 @@ from app.core.logging import get_logger
 from app.core.minio import storage
 from app.services import chat
 from app.services import prompt as prompt_service
+from app.services import skill_registry
 from app.services.llm import get_llm_service
 
 log = get_logger("analysis")
@@ -144,13 +145,14 @@ async def resolve_plan_for_paper(
         selected: list[str] | None = [explicit_skill]
     else:
         selected = list(config.selected_skills or []) if config else None
+    available = await skill_registry.list_options(session)
     return resolve_plan(
         selected_skills=selected,
         model=config.model if config else None,
         custom_prompt=config.custom_prompt if config else None,
         fallback_skill=fallback_skill,
         fallback_prompt=fallback_prompt,
-        available=[s["name"] for s in prompt_service.skill_options()],
+        available=[s["name"] for s in available],
         default_skill=prompt_service.DEFAULT_ANALYSIS_SKILL,
         default_model=settings.openai_model,
     )
@@ -164,6 +166,7 @@ async def run_analysis(
     ensure_parsed(paper)
 
     llm = get_llm_service()
+    registry = await skill_registry.load_registry(session)
     results: list[models.AIAnalysisResult] = []
     for skill in plan.skills:
         messages = await chat.build_messages(
@@ -172,6 +175,7 @@ async def run_analysis(
             paper_id=paper_id,
             skill_name=skill,
             extra_system=plan.custom_prompt,
+            registry=registry,
         )
         kwargs = {"model": plan.model} if plan.model else {}
         content = await llm.complete(messages, **kwargs)

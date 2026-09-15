@@ -131,12 +131,17 @@ export interface ChatMessage {
   content: string;
 }
 
-/** AI 分析可选的 Skill（来自后端 skills/ 目录） */
+/** AI 分析可选的 Skill（来自后端 skills/ 目录 + 数据库自定义 Skill） */
 export interface AnalysisSkill {
   name: string;
   description: string;
   tools: string[];
   prompt: string;
+  /** builtin（文件内置）| custom（数据库自定义） */
+  source?: string;
+  is_builtin?: boolean;
+  /** 自定义 Skill 与内置同名（覆盖内置） */
+  overrides_builtin?: boolean;
 }
 
 /** 论文级 AI 分析配置 */

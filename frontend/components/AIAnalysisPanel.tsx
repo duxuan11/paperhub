@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { apiGet, apiPost, apiPut } from "@/lib/api";
 import type { AIAnalysisPayload, Job } from "@/lib/types";
 import {
@@ -204,13 +205,22 @@ export function AIAnalysisPanel({ paperId }: { paperId: string }) {
 
       {/* Skills */}
       <section className="rounded-xl border border-neutral-200 bg-white">
-        <div className="px-5 py-3 border-b border-neutral-100">
-          <div className="text-[13px] font-semibold text-neutral-800">
-            分析 Skills
+        <div className="px-5 py-3 border-b border-neutral-100 flex items-start gap-3">
+          <div className="min-w-0">
+            <div className="text-[13px] font-semibold text-neutral-800">
+              分析 Skills
+            </div>
+            <div className="text-[11px] text-neutral-400">
+              选择用于分析这篇论文的 Skill（内置 + 自定义）
+            </div>
           </div>
-          <div className="text-[11px] text-neutral-400">
-            选择用于分析这篇论文的 Skill（来自项目 skills/ 目录）
-          </div>
+          <span className="flex-1" />
+          <Link
+            href="/settings?section=skills"
+            className="shrink-0 rounded-md border border-neutral-200 px-2.5 py-1 text-[11px] text-neutral-500 hover:border-brand-300 hover:text-brand-600"
+          >
+            管理 Skills
+          </Link>
         </div>
         <div className="divide-y divide-neutral-50">
           {available.length === 0 && (

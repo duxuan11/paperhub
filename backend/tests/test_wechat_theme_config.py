@@ -51,6 +51,35 @@ REQUIRED_STYLE_KEYS = (
 # ---------- 编译器 ----------
 
 
+def test_compile_styles_h2_is_tinted_section_card():
+    styles = compile_styles({"colors": {"primary": "#123456"}})
+    assert styles["h2"]["border-left"] == "4px solid #123456"
+    assert styles["h2"]["background-color"] == tint("#123456", 0.93)
+    assert styles["h2"]["border-radius"]
+
+
+def test_compile_styles_hr_is_centered_short_rule():
+    styles = compile_styles()
+    assert styles["hr"]["width"]
+    assert styles["hr"]["margin"].endswith("auto")
+
+
+def test_compile_styles_table_header_uses_primary():
+    styles = compile_styles({"colors": {"primary": "#123456"}})
+    assert styles["th"]["background-color"] == "#123456"
+    assert styles["th"]["color"] == "#FFFFFF"
+
+
+def test_builtin_themes_include_polished_set():
+    ids = {t.id for t in BUILTIN_THEMES}
+    assert {"paperhub-tech", "paperhub-editorial", "paperhub-ink"} <= ids
+
+
+def test_builtin_themes_have_distinct_primaries():
+    primaries = {t.config["colors"]["primary"] for t in BUILTIN_THEMES}
+    assert len(primaries) == len(BUILTIN_THEMES)
+
+
 def test_merge_config_fills_defaults():
     cfg = merge_config({"colors": {"primary": "#FF0000"}})
     assert cfg["colors"]["primary"] == "#FF0000"
