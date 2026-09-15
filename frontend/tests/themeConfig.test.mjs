@@ -65,6 +65,25 @@ test("colors and typography flow into component styles", () => {
   assert.equal(styles.article["font-size"], "18px");
 });
 
+test("compileThemeConfig renders h2 as a tinted section card", () => {
+  const styles = compileThemeConfig({ colors: { primary: "#123456" } });
+  assert.equal(styles.h2["border-left"], "4px solid #123456");
+  assert.equal(styles.h2["background-color"], tint("#123456", 0.93));
+  assert.ok(styles.h2["border-radius"]);
+});
+
+test("compileThemeConfig centers a short hr rule", () => {
+  const styles = compileThemeConfig();
+  assert.ok(styles.hr.width);
+  assert.ok(String(styles.hr.margin).endsWith("auto"));
+});
+
+test("compileThemeConfig gives the table header a primary header", () => {
+  const styles = compileThemeConfig({ colors: { primary: "#123456" } });
+  assert.equal(styles.th["background-color"], "#123456");
+  assert.equal(styles.th.color, "#FFFFFF");
+});
+
 test("component overrides win over compiled defaults", () => {
   const styles = compileThemeConfig({
     components: {

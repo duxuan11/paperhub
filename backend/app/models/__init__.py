@@ -74,6 +74,7 @@ class Paper(Base):
     markdown_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     metadata_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     analysis_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # 汇总后的 AI 分析文本（各 Skill 结果的拼接，兼容旧接口与公众号生成）
     analysis: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[PaperStatus] = mapped_column(
         Enum(PaperStatus), default=PaperStatus.UPLOADED, nullable=False
@@ -94,6 +95,59 @@ class Paper(Base):
     articles: Mapped[list["Article"]] = relationship(
         back_populates="paper", cascade="all, delete-orphan"
     )
+    ai_analysis_config: Mapped["AIAnalysisConfig"] = relationship(
+        back_populates="paper", cascade="all, delete-orphan", uselist=False
+    )
+    ai_analysis_results: Mapped[list["AIAnalysisResult"]] = relationship(
+        back_populates="paper", cascade="all, delete-orphan"
+    )
+
+
+class AIAnalysisConfig(Base):
+    """论文级「AI 分析」配置：选哪些 Skill、用哪个模型、自定义要求。
+
+    ``selected_skills`` 只保存 Skill ID（``skills/`` 中的目录名），Skill 正文
+    始终由 Skill 系统按需加载，避免配置与 Skill 内容双份维护。
+    """
+
+    __tablename__ = "ai_analysis_configs"
+
+    paper_id: Mapped[str] = mapped_column(
+        ForeignKey("papers.id", ondelete="CASCADE"), primary_key=True
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    selected_skills: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    custom_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    paper: Mapped["Paper"] = relationship(back_populates="ai_analysis_config")
+
+
+class AIAnalysisResult(Base):
+    """AI 分析结果：每个 (论文, Skill) 一条，便于按 Skill 分区展示。"""
+
+    __tablename__ = "ai_analysis_results"
+
+    paper_id: Mapped[str] = mapped_column(
+        ForeignKey("papers.id", ondelete="CASCADE"), primary_key=True
+    )
+    skill: Mapped[str] = mapped_column(String(64), primary_key=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    paper: Mapped["Paper"] = relationship(back_populates="ai_analysis_results")
 
 
 class Figure(Base):
@@ -188,6 +242,27 @@ class AppSetting(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class CustomSkill(Base):
+    """用户自定义 Skill（内置 Skill 仍是 ``skills/<name>/SKILL.md`` 文件）。
+
+    ``name`` 与内置 Skill 同名时表示「覆盖内置」，加载时自定义优先；
+    删除自定义后内置内容自动恢复。
+    """
+
+    __tablename__ = "custom_skills"
+
+    name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tools: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

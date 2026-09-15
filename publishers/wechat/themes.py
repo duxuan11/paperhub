@@ -46,6 +46,12 @@ __all__ = [
 
 DEFAULT_THEME_ID = "paperhub-science"
 
+# 衬线字体栈：杂志 / 国风主题的标题使用，提升人文质感
+SERIF_STACK = (
+    "'Songti SC','Noto Serif SC','Source Han Serif SC',Georgia,"
+    "'Times New Roman',serif"
+)
+
 
 @dataclass
 class WeChatTheme:
@@ -275,6 +281,124 @@ BUILTIN_THEMES: list[WeChatTheme] = [
                 "heading2Size": "19px",
                 "heading3Size": "17px",
                 "captionSize": "13px",
+            },
+        },
+    ),
+    _builtin(
+        "paperhub-tech",
+        "Tech Indigo",
+        "科技镜蓝：色块章节标题 + 高对比表头，适合 AI / 工程 / 计算类论文。",
+        {
+            "colors": {
+                "primary": "#4F46E5",
+                "secondary": "#475569",
+                "text": "#0F172A",
+                "muted": "#64748B",
+                "background": "#FFFFFF",
+                "border": "#E0E7FF",
+            },
+            "typography": {
+                "bodySize": "15px",
+                "bodyLineHeight": "1.8",
+                "heading1Size": "24px",
+                "heading2Size": "19px",
+                "heading3Size": "17px",
+                "captionSize": "12px",
+            },
+            "components": {
+                "h2": {
+                    "background-color": "#EEF2FF",
+                    "border-left": "4px solid #4F46E5",
+                },
+                "h3": {
+                    "color": "#4F46E5",
+                    "border-bottom": "1px dashed #C7D2FE",
+                },
+                "code": {"background-color": "#EEF2FF", "color": "#4338CA"},
+            },
+        },
+    ),
+    _builtin(
+        "paperhub-editorial",
+        "Editorial Serif",
+        "杂志米白：衬线标题 + 大留白，适合综述 / 长文精读。",
+        {
+            "colors": {
+                "primary": "#9A3412",
+                "secondary": "#57534E",
+                "text": "#1C1917",
+                "muted": "#A8A29E",
+                "background": "#FDFCFA",
+                "border": "#E7E0D8",
+            },
+            "typography": {
+                "fontFamily": SERIF_STACK,
+                "bodySize": "16px",
+                "bodyLineHeight": "1.9",
+                "heading1Size": "26px",
+                "heading2Size": "20px",
+                "heading3Size": "17px",
+                "captionSize": "12px",
+            },
+            "components": {
+                "h1": {
+                    "font-family": SERIF_STACK,
+                    "letter-spacing": "1px",
+                    "border-bottom": "1px solid #E7E0D8",
+                },
+                "h2": {
+                    "background-color": "transparent",
+                    "border-left": "none",
+                    "border-bottom": "2px solid #9A3412",
+                    "border-radius": "0",
+                    "padding": "0 0 8px",
+                },
+                "h3": {"color": "#9A3412", "border-bottom": "none"},
+                "blockquote": {
+                    "background-color": "transparent",
+                    "border": "none",
+                    "border-left": "3px solid #9A3412",
+                    "border-radius": "0",
+                    "font-style": "italic",
+                },
+                "image": {"border-radius": "0", "box-shadow": "none"},
+            },
+        },
+    ),
+    _builtin(
+        "paperhub-ink",
+        "Ink Classic",
+        "国风墨色：米纸底 + 朱砂红强调，适合人文 / 医学 / 交叉学科。",
+        {
+            "colors": {
+                "primary": "#8C1D18",
+                "secondary": "#57534E",
+                "text": "#1F1B16",
+                "muted": "#8A8175",
+                "background": "#FAF8F2",
+                "border": "#E5DED0",
+            },
+            "typography": {
+                "fontFamily": SERIF_STACK,
+                "bodySize": "16px",
+                "bodyLineHeight": "1.9",
+                "heading1Size": "25px",
+                "heading2Size": "20px",
+                "heading3Size": "17px",
+                "captionSize": "12px",
+            },
+            "components": {
+                "h1": {"font-family": SERIF_STACK, "letter-spacing": "2px"},
+                "h2": {
+                    "background-color": "#F3EDE1",
+                    "border-left": "4px solid #8C1D18",
+                    "border-radius": "0",
+                },
+                "h3": {
+                    "color": "#8C1D18",
+                    "border-bottom": "1px solid #E5DED0",
+                },
+                "hr": {"border-top": "2px solid #8C1D18", "width": "60px"},
             },
         },
     ),

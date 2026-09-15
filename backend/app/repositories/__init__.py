@@ -111,3 +111,94 @@ async def get_wechat_theme(
     session: AsyncSession, theme_id: str
 ) -> models.WeChatArticleTheme | None:
     return await session.get(models.WeChatArticleTheme, theme_id)
+
+
+async def get_setting(session: AsyncSession, key: str) -> str | None:
+    row = await session.get(models.AppSetting, key)
+    return row.value if row else None
+
+
+async def set_setting(session: AsyncSession, key: str, value: str | None) -> None:
+    """写入或覆盖一个配置项（value 为 None/空串时视为清除）。"""
+    row = await session.get(models.AppSetting, key)
+    if row is None:
+        row = models.AppSetting(key=key)
+        session.add(row)
+    row.value = value
+    await session.commit()
+
+
+async def list_custom_skills(
+    session: AsyncSession,
+) -> Sequence[models.CustomSkill]:
+    stmt = select(models.CustomSkill).order_by(models.CustomSkill.created_at.asc())
+    return (await session.scalars(stmt)).all()
+
+
+async def get_custom_skill(
+    session: AsyncSession, name: str
+) -> models.CustomSkill | None:
+    return await session.get(models.CustomSkill, name)
+
+
+async def get_ai_analysis_config(
+    session: AsyncSession, paper_id: str
+) -> models.AIAnalysisConfig | None:
+    return await session.get(models.AIAnalysisConfig, paper_id)
+
+
+async def upsert_ai_analysis_config(
+    session: AsyncSession,
+    paper_id: str,
+    *,
+    enabled: bool | None = None,
+    model: str | None = None,
+    selected_skills: list[str] | None = None,
+    custom_prompt: str | None = None,
+) -> models.AIAnalysisConfig:
+    """按字段增量更新论文级 AI 分析配置（None 表示保持原值）。"""
+    row = await session.get(models.AIAnalysisConfig, paper_id)
+    if row is None:
+        row = models.AIAnalysisConfig(paper_id=paper_id)
+        session.add(row)
+    if enabled is not None:
+        row.enabled = enabled
+    if model is not None:
+        row.model = model
+    if selected_skills is not None:
+        row.selected_skills = selected_skills
+    if custom_prompt is not None:
+        row.custom_prompt = custom_prompt
+    await session.commit()
+    await session.refresh(row)
+    return row
+
+
+async def list_analysis_results(
+    session: AsyncSession, paper_id: str
+) -> Sequence[models.AIAnalysisResult]:
+    stmt = (
+        select(models.AIAnalysisResult)
+        .where(models.AIAnalysisResult.paper_id == paper_id)
+        .order_by(models.AIAnalysisResult.created_at.asc())
+    )
+    return (await session.scalars(stmt)).all()
+
+
+async def upsert_analysis_result(
+    session: AsyncSession,
+    paper_id: str,
+    skill: str,
+    content: str,
+    model: str | None = None,
+) -> models.AIAnalysisResult:
+    """写入某个 (论文, Skill) 的分析结果，重复运行时覆盖旧结果。"""
+    row = await session.get(models.AIAnalysisResult, (paper_id, skill))
+    if row is None:
+        row = models.AIAnalysisResult(paper_id=paper_id, skill=skill)
+        session.add(row)
+    row.content = content
+    row.model = model
+    await session.commit()
+    await session.refresh(row)
+    return row

@@ -14,7 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import repositories
 from app.core.logging import get_logger
-from app.services.skill import list_skills, load_skill
+from app.services import skill_registry
+from app.services.skill import list_skill_options
 
 log = get_logger("prompt")
 
@@ -35,41 +36,32 @@ def default_analysis_prompt() -> str:
     return DEFAULT_ANALYSIS_PROMPT
 
 
-def skill_options() -> list[dict]:
-    """可供「AI 分析」调用的 Skill 列表（含正文，供编辑器载入）。"""
-    out: list[dict] = []
-    for meta in list_skills():
-        name = meta.get("name") or ""
-        skill = load_skill(name)
-        if not skill:
-            continue
-        out.append(
-            {
-                "name": name,
-                "description": meta.get("description") or "",
-                "tools": meta.get("tools") or [],
-                "prompt": skill.prompt,
-            }
-        )
-    return out
+def skill_options(registry: dict | None = None) -> list[dict]:
+    """可供「AI 分析」调用的 Skill 列表（含正文，供编辑器载入）。
+
+    ``registry`` 为自定义 Skill 映射（见 ``skill_registry.load_registry``），
+    同名时自定义优先于内置文件。
+    """
+    return list_skill_options(registry)
 
 
-def skill_exists(name: str) -> bool:
-    return any(s["name"] == name for s in skill_options())
+def skill_exists(name: str, registry: dict | None = None) -> bool:
+    return any(s["name"] == name for s in skill_options(registry))
 
 
 async def get_analysis_config(session: AsyncSession) -> dict:
     """读取当前生效的分析配置（含默认值，供前端渲染编辑器）。"""
     prompt = await repositories.get_setting(session, ANALYSIS_PROMPT_KEY) or ""
     skill = await repositories.get_setting(session, ANALYSIS_SKILL_KEY) or ""
-    if not skill or not skill_exists(skill):
+    registry = await skill_registry.load_registry(session)
+    if not skill or not skill_exists(skill, registry):
         skill = DEFAULT_ANALYSIS_SKILL
     return {
         "skill": skill,
         "prompt": prompt,
         "default_skill": DEFAULT_ANALYSIS_SKILL,
         "default_prompt": DEFAULT_ANALYSIS_PROMPT,
-        "skills": skill_options(),
+        "skills": skill_options(registry),
     }
 
 
@@ -77,9 +69,10 @@ async def save_analysis_config(
     session: AsyncSession, *, skill: str | None, prompt: str | None
 ) -> dict:
     """保存分析配置（prompt 传空串等价于清除，回退到默认）。"""
+    registry = await skill_registry.load_registry(session)
     if skill is not None:
         skill = skill.strip()
-        if skill and not skill_exists(skill):
+        if skill and not skill_exists(skill, registry):
             raise ValueError(f"Skill 不存在: {skill}")
         await repositories.set_setting(session, ANALYSIS_SKILL_KEY, skill or None)
     if prompt is not None:
@@ -97,8 +90,9 @@ async def resolve_for_analysis(
     任务里显式传入的 skill 优先；否则用设置页保存的默认 Skill。
     """
     prompt = await repositories.get_setting(session, ANALYSIS_PROMPT_KEY) or ""
+    registry = await skill_registry.load_registry(session)
     if not skill:
         skill = await repositories.get_setting(session, ANALYSIS_SKILL_KEY) or ""
-    if not skill or not skill_exists(skill):
+    if not skill or not skill_exists(skill, registry):
         skill = DEFAULT_ANALYSIS_SKILL
     return skill, (prompt.strip() or None)

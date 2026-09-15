@@ -1,7 +1,16 @@
-"""Skill 系统：加载 skills/*/SKILL.md，解析 YAML frontmatter + 模板。"""
+"""Skill 系统：加载 skills/*/SKILL.md，解析 YAML frontmatter + 模板。
+
+内置 Skill 是仓库内的文件；用户自定义 Skill 存在数据库（见
+:mod:`app.services.skill_registry`），加载时以「自定义优先」的方式叠加：
+
+- 同名时自定义 Skill 覆盖内置（即「编辑内置 Skill」的落地方式）；
+- 调用方在异步上下文里先从数据库加载 registry，再传给 ``load_skill`` /
+  ``list_skills``，因此 API 与 Worker 两个进程都能看到最新自定义 Skill。
+"""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,6 +29,7 @@ class Skill:
     prompt: str = ""
     tools: list[str] = field(default_factory=list)
     path: Path | None = None
+    source: str = "builtin"  # builtin | custom
 
     def render(self, **variables: str) -> str:
         prompt = self.prompt
@@ -28,7 +38,34 @@ class Skill:
         return prompt
 
 
-def load_skill(name: str) -> Skill | None:
+def _skill_bases() -> list[Path]:
+    return [
+        settings.skills_path,
+        Path(__file__).resolve().parents[3] / "skills",
+    ]
+
+
+def _builtin_skill_dirs() -> dict[str, Path]:
+    """内置 Skill 目录映射（name -> dir），后者不覆盖前者。"""
+    out: dict[str, Path] = {}
+    for base in _skill_bases():
+        if not base.exists():
+            continue
+        for d in base.iterdir():
+            if (d / "SKILL.md").exists() and d.name not in out:
+                out[d.name] = d
+    return out
+
+
+def builtin_skill_names() -> list[str]:
+    return list(_builtin_skill_dirs().keys())
+
+
+def is_builtin_skill(name: str) -> bool:
+    return name in _builtin_skill_dirs()
+
+
+def _load_builtin_skill(name: str) -> Skill | None:
     base = settings.skills_path / name
     if not base.exists():
         base = Path(__file__).resolve().parents[3] / "skills" / name
@@ -52,25 +89,67 @@ def load_skill(name: str) -> Skill | None:
         prompt=body.strip(),
         tools=frontmatter.get("tools", []),
         path=skill_file,
+        source="builtin",
     )
 
 
-def list_skills() -> list[dict]:
-    out: list[dict] = []
-    for base in (settings.skills_path, Path(__file__).resolve().parents[3] / "skills"):
-        if not base.exists():
+def load_skill(
+    name: str, registry: Mapping[str, Skill] | None = None
+) -> Skill | None:
+    """加载 Skill；``registry``（自定义 Skill）中同名项优先于内置文件。"""
+    if registry and name in registry:
+        return registry[name]
+    return _load_builtin_skill(name)
+
+
+def list_skills(registry: Mapping[str, Skill] | None = None) -> list[dict]:
+    """列出可用 Skill（自定义在前，同名内置被隐藏）。"""
+    custom = registry or {}
+    out: list[dict] = [
+        {
+            "name": name,
+            "description": skill.description,
+            "tools": list(skill.tools or []),
+            "source": "custom",
+            "is_builtin": False,
+        }
+        for name, skill in custom.items()
+    ]
+    for name in _builtin_skill_dirs():
+        if name in custom:
             continue
-        for d in base.iterdir():
-            if (d / "SKILL.md").exists():
-                s = load_skill(d.name)
-                if s:
-                    out.append(
-                        {"name": s.name, "description": s.description, "tools": s.tools}
-                    )
-    seen: set[str] = set()
-    dedup = []
-    for s in out:
-        if s["name"] not in seen:
-            seen.add(s["name"])
-            dedup.append(s)
-    return dedup
+        s = _load_builtin_skill(name)
+        if s:
+            out.append(
+                {
+                    "name": s.name,
+                    "description": s.description,
+                    "tools": list(s.tools or []),
+                    "source": "builtin",
+                    "is_builtin": True,
+                }
+            )
+    return out
+
+
+def list_skill_options(registry: Mapping[str, Skill] | None = None) -> list[dict]:
+    """列表 + 正文，供「AI 分析」Skill 选择器与设置页编辑器使用。"""
+    builtin_names = set(_builtin_skill_dirs())
+    out: list[dict] = []
+    for meta in list_skills(registry):
+        name = meta["name"]
+        skill = load_skill(name, registry=registry)
+        if not skill:
+            continue
+        out.append(
+            {
+                "name": name,
+                "description": skill.description,
+                "tools": list(skill.tools or []),
+                "prompt": skill.prompt,
+                "source": meta["source"],
+                "is_builtin": meta["is_builtin"],
+                "overrides_builtin": meta["source"] == "custom" and name in builtin_names,
+            }
+        )
+    return out

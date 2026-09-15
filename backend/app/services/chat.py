@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import models, repositories
 from app.core.minio import storage
+from app.services import skill_registry as skill_registry_service
 from app.services.llm import get_llm_service
-from app.services.skill import load_skill
+from app.services.skill import Skill, load_skill
 
 BASE_SYSTEM = (
     "你是 PaperHub 的科研论文分析助手。你基于用户提供的论文 Markdown 内容回答问题，"
@@ -35,6 +36,7 @@ async def build_messages(
     skill_name: str | None = None,
     extra_system: str | None = None,
     history: list[dict[str, str]] | None = None,
+    registry: Mapping[str, Skill] | None = None,
 ) -> list[dict]:
     messages: list[dict] = [{"role": "system", "content": BASE_SYSTEM}]
 
@@ -58,7 +60,10 @@ async def build_messages(
         messages[0]["content"] += "\n\n当前论文上下文：\n" + paper_ctx
 
     if skill_name:
-        skill = load_skill(skill_name)
+        reg = registry
+        if reg is None and session is not None:
+            reg = await skill_registry_service.load_registry(session)
+        skill = load_skill(skill_name, registry=reg)
         if skill:
             messages[0]["content"] += "\n\n请遵循以下 Skill 要求：\n" + skill.prompt
 

@@ -101,6 +101,12 @@ export default function PaperReaderPage() {
         </h1>
         <StatusBadge status={status} />
         <div className="flex items-center gap-1.5">
+          <Link
+            href={`/analysis?paper=${id}`}
+            className="px-2.5 py-1 rounded-md bg-brand-600 text-white text-[11px] font-medium hover:bg-brand-700"
+          >
+            AI 分析
+          </Link>
           <button
             onClick={() => run(`/papers/${id}/parse`, "解析")}
             className="px-2.5 py-1 rounded-md border border-neutral-200 text-[11px] text-neutral-500 hover:text-brand-600"

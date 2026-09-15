@@ -130,3 +130,47 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
 }
+
+/** AI 分析可选的 Skill（来自后端 skills/ 目录 + 数据库自定义 Skill） */
+export interface AnalysisSkill {
+  name: string;
+  description: string;
+  tools: string[];
+  prompt: string;
+  /** builtin（文件内置）| custom（数据库自定义） */
+  source?: string;
+  is_builtin?: boolean;
+  /** 自定义 Skill 与内置同名（覆盖内置） */
+  overrides_builtin?: boolean;
+}
+
+/** 论文级 AI 分析配置 */
+export interface AIAnalysisConfig {
+  paper_id: string;
+  enabled: boolean;
+  model: string;
+  selected_skills: string[];
+  custom_prompt: string;
+  default_model: string;
+  default_skills: string[];
+  available_skills: AnalysisSkill[];
+  updated_at?: string | null;
+}
+
+/** 每个 Skill 一条的结构化分析结果 */
+export interface AIAnalysisResult {
+  paper_id: string;
+  skill: string;
+  content: string;
+  model: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+/** GET /papers/{id}/ai-analysis 的响应 */
+export interface AIAnalysisPayload {
+  paper_id: string;
+  parsed: boolean;
+  config: AIAnalysisConfig;
+  results: AIAnalysisResult[];
+}

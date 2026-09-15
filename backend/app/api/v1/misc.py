@@ -10,8 +10,8 @@ from app.core.database import get_session
 from app.core.security import require_auth
 from app.schemas import AnalysisPromptOut, AnalysisPromptUpdate, HealthOut
 from app.services import prompt as prompt_service
+from app.services import skill_registry
 from app.services.llm import llm_mode
-from app.services.skill import list_skills
 
 router = APIRouter(prefix="/api/v1", tags=["misc"])
 
@@ -33,11 +33,6 @@ async def health():
         if (settings.wechat_app_id and settings.wechat_app_secret)
         else "mock",
     )
-
-
-@router.get("/skills", dependencies=[Depends(require_auth)])
-async def skills():
-    return {"skills": list_skills()}
 
 
 @router.get("/settings", dependencies=[Depends(require_auth)])
@@ -81,6 +76,6 @@ async def update_analysis_prompt(
 
 
 @router.get("/settings/skills", dependencies=[Depends(require_auth)])
-async def settings_skills():
-    """供设置页「调用 Skill」入口使用：返回每个 Skill 的正文。"""
-    return {"skills": prompt_service.skill_options()}
+async def settings_skills(session: AsyncSession = Depends(get_session)):
+    """供设置页「调用 Skill」入口使用：返回每个 Skill 的正文（含自定义）。"""
+    return {"skills": await skill_registry.list_options(session)}

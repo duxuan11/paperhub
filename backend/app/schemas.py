@@ -194,6 +194,26 @@ class SkillDetail(BaseModel):
     description: str = ""
     tools: list[str] = Field(default_factory=list)
     prompt: str = ""
+    source: str = "builtin"  # builtin | custom
+    is_builtin: bool = True
+    overrides_builtin: bool = False
+
+
+class SkillListOut(BaseModel):
+    skills: list[SkillDetail] = Field(default_factory=list)
+
+
+class SkillCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    description: str = ""
+    tools: list[str] = Field(default_factory=list)
+    prompt: str = ""
+
+
+class SkillUpdate(BaseModel):
+    description: str | None = None
+    tools: list[str] | None = None
+    prompt: str | None = None
 
 
 class AnalysisPromptOut(BaseModel):
@@ -207,6 +227,49 @@ class AnalysisPromptOut(BaseModel):
 class AnalysisPromptUpdate(BaseModel):
     skill: str | None = None
     prompt: str | None = None
+
+
+# ---- AI 分析（Skills + Model + Prompt） ----
+class AIAnalysisConfigOut(BaseModel):
+    paper_id: str
+    enabled: bool = True
+    model: str = ""
+    selected_skills: list[str] = Field(default_factory=list)
+    custom_prompt: str = ""
+    default_model: str = ""
+    default_skills: list[str] = Field(default_factory=list)
+    available_skills: list[SkillDetail] = Field(default_factory=list)
+    updated_at: datetime | None = None
+
+
+class AIAnalysisConfigUpdate(BaseModel):
+    enabled: bool | None = None
+    model: str | None = None
+    selected_skills: list[str] | None = None
+    custom_prompt: str | None = None
+
+
+class AIAnalysisRunRequest(AIAnalysisConfigUpdate):
+    """可选的运行参数：先保存这些配置，再执行分析。"""
+
+
+class AIAnalysisResultOut(BaseModel):
+    paper_id: str
+    skill: str
+    content: str = ""
+    model: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class AIAnalysisOut(BaseModel):
+    paper_id: str
+    parsed: bool = False
+    config: AIAnalysisConfigOut
+    results: list[AIAnalysisResultOut] = Field(default_factory=list)
 
 
 class ChatRequest(BaseModel):

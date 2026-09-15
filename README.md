@@ -13,10 +13,11 @@
 - 论文批量上传、管理、状态机跟踪
 - PDF → MinerU 解析 → 结构化 Markdown + 图片
 - YOLO Figure 检测（可配置模型 / 无模型时启发式降级）
-- 三栏论文阅读器（目录 / Markdown / AI Chat）
-- AI Chat（OpenAI-compatible，默认 DeepSeek，无 Key 时 Mock）
-- Skill 系统（paper-summary / figure-analysis / wechat-article / 等）
-- 微信公众号文章生成（5 种模板）+ 三栏编辑器
+- 三栏论文阅读器（目录 / Markdown / AI 助手问答）
+- AI 分析：论文级配置 Skills / Model / Custom Prompt，基于 MinerU 结果逐 Skill 生成结构化结果
+- AI Chat（自由问答 + 阅读器内论文问答；OpenAI-compatible，默认 DeepSeek，无 Key 时 Mock）
+- Skill 系统（内置 paper-summary / figure-analysis / wechat-article / 等）+ 自定义 Skill（设置页新建 / 覆盖内置 / 删除）
+- 微信公众号文章生成（8 套精致排版模板，支持自定义主题）+ 三栏编辑器
 - 微信公众号草稿箱发布（安全设计：默认不直接发布）
 - MCP Server（接入 Open WebUI / Claude 等 Agent）
 - Typer CLI（`paperhub`）
@@ -268,7 +269,10 @@ GET    /papers                        # 列表
 GET    /papers/{id}                   # 详情
 GET    /papers/{id}/markdown          # Markdown
 GET    /papers/{id}/figures           # Figure 列表
-GET    /papers/{id}/analysis          # AI 分析结果
+GET    /papers/{id}/analysis          # AI 分析汇总文本（兼容）
+GET    /papers/{id}/ai-analysis       # AI 分析配置 + 分 Skill 结果
+PUT    /papers/{id}/ai-analysis/config # 保存 Skills/Model/Prompt 配置
+POST   /papers/{id}/ai-analysis/run   # 执行 AI 分析（需 MinerU 已解析）
 POST   /papers/{id}/parse             # 重新解析
 POST   /papers/{id}/detect-figures    # 重新检测
 POST   /papers/{id}/analyze           # AI 分析
@@ -282,7 +286,12 @@ POST   /wechat/publish                # 正式发布
 POST   /chat                          # SSE 流式对话
 POST   /agent                         # 自由 Agent（带入最近论文）
 GET    /files/{key}                   # 图片/文件代理
-GET    /health  /skills  /settings    # 元信息
+GET    /skills                        # 可用 Skill 列表（内置 + 自定义）
+POST   /skills                        # 新建自定义 Skill（同名即覆盖内置）
+GET    /skills/{name}                 # Skill 详情（含正文）
+PUT    /skills/{name}                 # 修改自定义 Skill
+DELETE /skills/{name}                 # 删除自定义 Skill（恢复内置）
+GET    /health  /settings             # 元信息
 ```
 
 鉴权：设置 `PAPERHUB_API_KEY` 后，需携带 `Authorization: Bearer *** 用 `paperhub config set api-key xxx`）。留空则开发模式不鉴权。

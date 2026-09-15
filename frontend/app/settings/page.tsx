@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { apiGet, apiPut } from "@/lib/api";
 import type { Health } from "@/lib/types";
 import { WechatThemeManager } from "@/components/WechatThemeManager";
+import { SkillManager } from "@/components/SkillManager";
 
 interface SettingsInfo {
   llm_base_url: string;
@@ -30,7 +31,7 @@ interface AnalysisPrompt {
   skills: SkillDetail[];
 }
 
-type Section = "overview" | "wechat";
+type Section = "overview" | "skills" | "wechat";
 type WechatTab = "account" | "themes";
 
 export default function SettingsPage() {
@@ -57,6 +58,10 @@ export default function SettingsPage() {
         setPrompt(c.prompt);
       })
       .catch(console.error);
+    const wanted = new URLSearchParams(window.location.search).get("section");
+    if (wanted === "skills" || wanted === "wechat" || wanted === "overview") {
+      setSection(wanted);
+    }
   }, []);
 
   // 载入某个 Skill 的正文到编辑器（覆盖当前内容，便于二次改写）
@@ -132,6 +137,7 @@ export default function SettingsPage() {
           {(
             [
               ["overview", "概览"],
+              ["skills", "AI 分析 Skills"],
               ["wechat", "微信公众号"],
             ] as [Section, string][]
           ).map(([key, label]) => (
@@ -187,6 +193,12 @@ export default function SettingsPage() {
                 PAPERHUB_API_KEY
               </code>
             </div>
+          </div>
+        )}
+
+        {section === "skills" && (
+          <div className="mt-6">
+            <SkillManager />
           </div>
         )}
 
