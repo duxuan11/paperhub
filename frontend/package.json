@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "next lint",
-    "test": "node --experimental-strip-types --test tests/themeConfig.test.mjs tests/aiAnalysis.test.mjs"
+    "test": "node --experimental-strip-types --test tests/themeConfig.test.mjs tests/aiAnalysis.test.mjs tests/figures.test.mjs"
   },
   "dependencies": {
     "katex": "0.16.11",
