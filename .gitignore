@@ -30,3 +30,6 @@ demo/*.pdf
 .DS_Store
 .idea/
 .vscode/
+
+# Superpowers 隔离工作区
+.worktrees/
