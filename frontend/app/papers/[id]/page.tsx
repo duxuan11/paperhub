@@ -6,8 +6,10 @@ import Link from "next/link";
 import { apiGet, apiPost } from "@/lib/api";
 import type { Figure, Job, Paper } from "@/lib/types";
 import { Markdown } from "@/components/Markdown";
+import { FigureDetectionList } from "@/components/FigureDetectionList";
 import { ChatPanel } from "@/components/ChatPanel";
 import { StatusBadge } from "@/components/StatusBadge";
+import { yoloFigures } from "@/lib/figures";
 
 interface TocItem {
   level: number;
@@ -50,6 +52,7 @@ export default function PaperReaderPage() {
   const [activeSection, setActiveSection] = useState("");
 
   const toc = useMemo(() => extractToc(markdown), [markdown]);
+  const detectedFigures = useMemo(() => yoloFigures(figures), [figures]);
 
   const load = useCallback(async () => {
     try {
@@ -156,12 +159,19 @@ export default function PaperReaderPage() {
                 {item.text}
               </a>
             ))}
-            {figures.length > 0 && (
+            {detectedFigures.length > 0 && (
               <div className="mt-3 pt-3 border-t border-neutral-100">
-                {figures.map((f) => (
-                  <div key={f.id} className="px-4 py-1 text-[11px] text-neutral-400">
-                    Figure {f.figure_number}
-                  </div>
+                <div className="px-4 py-1 text-[11px] font-medium text-neutral-400">
+                  Figure 检测
+                </div>
+                {detectedFigures.map((f) => (
+                  <a
+                    key={f.id}
+                    href={`#${f.id}`}
+                    className="block px-4 py-1 text-[12px] truncate text-neutral-500 hover:bg-neutral-50 hover:text-brand-600"
+                  >
+                    Figure {f.number}
+                  </a>
                 ))}
               </div>
             )}
@@ -171,7 +181,10 @@ export default function PaperReaderPage() {
         <section className="flex-1 min-w-0 overflow-y-auto bg-white">
           <article className="max-w-3xl mx-auto px-10 py-8">
             {markdown ? (
-              <Markdown content={markdown} paperId={id} />
+              <>
+                <Markdown content={markdown} paperId={id} />
+                <FigureDetectionList figures={detectedFigures} />
+              </>
             ) : (
               <div className="text-neutral-400 text-sm mt-20 text-center">
                 {status === "PARSING" || status === "UPLOADED"
