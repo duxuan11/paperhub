@@ -1196,7 +1196,131 @@ git commit -m "feat(frontend): 公众号预览用 KaTeX 渲染公式"
 
 ---
 
-### Task 7: 编辑器左栏图片管理 UI
+### Task 7: 跨语言公式语法 parity 测试
+
+**Files:**
+- Create: `tests/fixtures/math_syntax_cases.json`
+- Create: `backend/tests/test_math_syntax_parity.py`
+- Create: `frontend/tests/mathSyntaxParity.test.mjs`
+- Modify: `frontend/package.json`（`test` 脚本加入新测试）
+
+**Interfaces:**
+- Consumes: `publishers/wechat/math.py::extract_math`（Task 3）；`frontend/lib/wechatTheme.ts::renderWechatHtml` 与 `RenderOptions.renderMath`（Task 6）。
+- Produces: 共享夹具 `tests/fixtures/math_syntax_cases.json`，格式 `[{ "name": str, "markdown": str, "expected": [str] }]`（`expected` 为按首次出现顺序去重后的公式，跨行块级公式的换行保留）。前端与后端测试读同一份文件，任一侧语法漂移都会让对侧测试失败。
+
+- [ ] **Step 1: 建共享夹具**
+
+Create `tests/fixtures/math_syntax_cases.json`:
+
+```json
+[
+  { "name": "inline simple", "markdown": "目标 $V_i$ 最大", "expected": ["V_i"] },
+  { "name": "inline greek and subscript", "markdown": "$X = [\\alpha, h_m, l_h, g_{ext}]$", "expected": ["X = [\\alpha, h_m, l_h, g_{ext}]"] },
+  { "name": "inline ge", "markdown": "$\\delta \\ge 0.25$", "expected": ["\\delta \\ge 0.25"] },
+  { "name": "inline degree", "markdown": "$\\alpha \\in [26°, 90°]$", "expected": ["\\alpha \\in [26°, 90°]"] },
+  { "name": "display single line", "markdown": "$$a+b$$", "expected": ["a+b"] },
+  { "name": "display multiline", "markdown": "$$\nx = y\n+ z\n$$", "expected": ["x = y\n+ z"] },
+  { "name": "price is not math", "markdown": "价格 $100，不含税", "expected": [] },
+  { "name": "inline code ignored", "markdown": "代码 `$x$` 不是公式", "expected": [] },
+  { "name": "fenced code ignored", "markdown": "```\n$y$\n```\n\n正文 $z$", "expected": ["z"] },
+  { "name": "dedupe", "markdown": "$a$ 与 $a$", "expected": ["a"] },
+  { "name": "in list and table", "markdown": "- 目标：$V_i$\n\n| A | B |\n| - | - |\n| $f_1$ | y |", "expected": ["V_i", "f_1"] },
+  { "name": "escaped dollar", "markdown": "\\$5 不是公式", "expected": [] }
+]
+```
+
+- [ ] **Step 2: 写 Python parity 测试**
+
+Create `backend/tests/test_math_syntax_parity.py`:
+
+```python
+"""前后端公式语法 parity：两侧读同一份夹具，任一侧漂移都会失败。"""
+
+import json
+from pathlib import Path
+
+import pytest
+
+from app.core.config import settings  # noqa: F401  —— 注册仓库根目录到 sys.path
+
+from publishers.wechat.math import extract_math
+
+FIXTURE = (
+    Path(__file__).resolve().parents[2]
+    / "tests"
+    / "fixtures"
+    / "math_syntax_cases.json"
+)
+CASES = json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("case", CASES, ids=[c["name"] for c in CASES])
+def test_backend_math_syntax_matches_fixture(case):
+    assert extract_math(case["markdown"]) == case["expected"]
+```
+
+- [ ] **Step 3: 写 JS parity 测试**
+
+Create `frontend/tests/mathSyntaxParity.test.mjs`:
+
+```js
+/**
+ * 前后端公式语法 parity：读同一份夹具，用 renderMath 捕获前端实际识别的公式，
+ * 按首次出现顺序去重后与 expected 比对。
+ *
+ * 运行：npm --prefix frontend test
+ */
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+import { renderWechatHtml } from "../lib/wechatTheme.ts";
+
+const theme = { id: "t", name: "T", styles: {} };
+const fixtureUrl = new URL("../../tests/fixtures/math_syntax_cases.json", import.meta.url);
+const cases = JSON.parse(readFileSync(fixtureUrl, "utf-8"));
+
+for (const c of cases) {
+  test(`frontend math syntax: ${c.name}`, () => {
+    const seen = [];
+    renderWechatHtml(c.markdown, theme, {
+      renderMath: (tex) => {
+        if (!seen.includes(tex)) seen.push(tex);
+        return `<span>${tex}</span>`;
+      },
+    });
+    assert.deepEqual(seen, c.expected);
+  });
+}
+```
+
+Modify `frontend/package.json` 的 `test` 脚本，追加 `tests/mathSyntaxParity.test.mjs`：
+
+```json
+"test": "node --experimental-strip-types --test tests/themeConfig.test.mjs tests/aiAnalysis.test.mjs tests/figures.test.mjs tests/articleImages.test.mjs tests/wechatMath.test.mjs tests/mathSyntaxParity.test.mjs"
+```
+
+- [ ] **Step 4: 两侧都跑，确认通过**
+
+Run: `cd backend && uv run pytest tests/test_math_syntax_parity.py -q`
+Expected: 12 个参数化用例 PASS。
+
+Run: `cd frontend && npm test && npx tsc --noEmit`
+Expected: parity 用例 PASS，tsc 无输出。
+
+如果任一侧失败，说明 Task 3 / Task 6 的语法实现不一致：以夹具为准修实现（不是修夹具），并说明哪一侧偏了。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add tests/fixtures/math_syntax_cases.json backend/tests/test_math_syntax_parity.py frontend/tests/mathSyntaxParity.test.mjs frontend/package.json
+git commit -m "test: 前后端公式语法 parity 共享夹具"
+```
+
+---
+
+### Task 8: 编辑器左栏图片管理 UI
 
 **Files:**
 - Modify: `frontend/lib/api.ts`（`apiUploadArticleImage`）
@@ -1636,22 +1760,22 @@ git commit -m "feat(frontend): 文章编辑器左栏图片管理（排序/增删
 
 **Spec coverage:**
 
-- 1.1 数据与接口 → Task 2（`ArticleUpdateRequest.images`、`POST /articles/{id}/images`、复用 figures 接口由 Task 7 的 `openLibrary` 调用）。
+- 1.1 数据与接口 → Task 2（`ArticleUpdateRequest.images`、`POST /articles/{id}/images`、复用 figures 接口由 Task 8 的 `openLibrary` 调用）。
 - 1.2 纯逻辑 → Task 1。
-- 1.3 UI（左栏 Tab / 拖拽 / 删除 / 新增即刻插入 / 图库 Modal / 空态 / alt 优先级）→ Task 7。
+- 1.3 UI（左栏 Tab / 拖拽 / 删除 / 新增即刻插入 / 图库 Modal / 空态 / alt 优先级）→ Task 8。
 - 1.4 边界（`images` 为 null、越界、重复 key、上传失败、立即 PATCH）→ Task 1 测试 + Task 2/7 实现。
-- 2.1 公式语法 → Task 3（`INLINE_MATH_RE` / `_MATH_RE` / `_strip_code`）与 Task 6（`INLINE_MATH_RE` / `CODE_HTML_RE`），规则逐条对应。
+- 2.1 公式语法 → Task 3（`INLINE_MATH_RE` / `_MATH_RE` / `_strip_code`）与 Task 6（`INLINE_MATH_RE` / `CODE_HTML_RE`），规则逐条对应；前后端一致性由 Task 7 的共享夹具锁定。
 - 2.2 前端预览（依赖注入 / 块级 / KaTeX / CSS / 无 renderMath 兼容）→ Task 6。
 - 2.3 后端发布（matplotlib 依赖 / math.py / renderer math_map / `_upload_math_images` / Redis 缓存 / `build_article_payload`）→ Task 3、4、5。
 - 2.4 取舍、2.5 边界（代码内 `$` 跳过、块级围栏在代码块之后、失败降级、Redis 异常忽略）→ Task 3/4/5/6 实现与测试。
-- 测试清单 → Task 1/2/3/4/5/6 的测试文件 + Task 7 手工验证。
+- 测试清单 → Task 1/2/3/4/5/6/7 的测试文件 + Task 8 手工验证。
 
 **已知不在本计划内的取舍：** 公式不参与「跨公式的加粗/斜体嵌套」（`**$x$**` 仍可用，因为公式替换在加粗之后，不影响）；公式内容含 `*` 且成对出现时可能被斜体规则截断（用户样例不含该情况）。
 
 **类型一致性检查：**
 
-- `moveImage / removeImage / appendImage / insertImageAtCursor` 在 Task 1 定义，Task 7 按同名同签名使用。
+- `moveImage / removeImage / appendImage / insertImageAtCursor` 在 Task 1 定义，Task 8 按同名同签名使用。
 - `_image_ext / _append_image` 在 Task 2 定义并在测试与接口中使用。
 - `normalize_tex / extract_math / render_math_png` 在 Task 3 定义，Task 4/5 使用；`math_map` 的 key 统一为 `normalize_tex(tex)`。
 - `render_markdown_html(md, theme, image_map, math_map)` 第 4 个位置参数在 Task 4 定义，Task 5 的 `build_article_payload` 按位置传入。
-- `RenderOptions.renderMath` 在 Task 6 定义并由 `WeChatPreview` 注入。
+- `RenderOptions.renderMath` 在 Task 6 定义并由 `WeChatPreview` 注入；Task 7 用同一 `renderMath` 捕获前端识别的公式，与后端 `extract_math` 对同一夹具比对。
