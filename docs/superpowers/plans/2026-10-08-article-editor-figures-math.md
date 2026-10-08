@@ -498,7 +498,8 @@ def normalize_tex(tex: str) -> str:
     """把 LaTeX 常用宏名归一化成 matplotlib mathtext 认识的名字。"""
     out = tex
     for src, dst in _NORMALIZE.items():
-        out = re.sub(re.escape(src) + _MACRO_BOUNDARY, dst, out)
+        # 用函数替换，避免 dst 里的 ``\g`` 被 re.sub 当成组引用
+        out = re.sub(re.escape(src) + _MACRO_BOUNDARY, lambda _m, _d=dst: _d, out)
     return out
 
 
