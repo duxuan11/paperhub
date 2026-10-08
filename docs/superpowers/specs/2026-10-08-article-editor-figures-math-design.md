@@ -70,9 +70,9 @@
 ```
 [ 结构 ] [ 图片 5 ]
 ┌──────────────────────────┐
-│ ⠿ #1  [缩略图] 图注片段…  │  ← 拖拽排序
-│          插入↓   删除×    │
-│ ⠿ #2  [缩略图] …          │
+│ ⠿ #1  [缩略图]  插入↓ 删除× │  ← 拖拽排序
+│ ⠿ #2  [缩略图]  插入↓ 删除× │
+│ …                        │
 ├──────────────────────────┤
 │ + 从论文图库   + 上传图片 │
 └──────────────────────────┘
@@ -115,7 +115,7 @@
 - 新增 `publishers/wechat/math.py`：
   - `normalize_tex(tex) -> str`：常见宏归一化（`\ge→\geq`、`\le→\leq`、`\ne→\neq`、`\to→\rightarrow` 等）。spike 已确认 matplotlib mathtext 不认识 `\ge`；`°`、`\mu`、下标、`\frac`、`\text` 可直接用。
   - `extract_math(md) -> list[str]`：按 2.1 语法取出**去重后**的公式（保留首次出现顺序）。
-  - `render_math_png(tex, display=False, size_px=16) -> bytes | None`：Agg 后端渲染透明底 PNG；行内按正文字号（≈1em 高），块级居中放大；失败返回 `None`。worker 从 `theme_obj.css("paragraph")["fontSize"]` 解析出 px 传入，解析失败用 16。
+  - `render_math_png(tex, display=False, size_px=16) -> bytes | None`：Agg 后端渲染透明底 PNG；行内按正文字号（≈1em 高），块级居中放大；失败返回 `None`。worker 从 `theme_obj.css("paragraph")["font-size"]` 解析出 px 传入，解析失败用 16。
 - `render_markdown_html(md, theme, image_map, math_map)`：`math_map = {归一化 tex: 微信图片 URL}`。命中 → 输出 `<img>`（行内 `vertical-align:middle`，块级居中）；未命中 → 退化为转义后的 `$...$` 原文（今天的行为），并记日志。
 - Worker（`backend/app/workers/tasks.py`）新增 `_upload_math_images(publisher, content) -> dict[str, str]`：
   - 按 `sha1(normalize_tex(tex))` 查 Redis 缓存（`wechat:math:{hash}` → mmbiz URL），命中直接复用；
