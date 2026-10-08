@@ -16,6 +16,7 @@ from __future__ import annotations
 import html
 import re
 
+from publishers.wechat.math import INLINE_MATH_RE, normalize_tex
 from publishers.wechat.themes import DEFAULT_THEME_ID, WeChatTheme, get_theme
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
@@ -72,8 +73,51 @@ def _tag(tag: str, content: str, style: dict[str, str] | None = None) -> str:
     return f"<{tag}{style_attr(style)}>{content}</{tag}>"
 
 
-def _inline(text: str, theme: WeChatTheme, image_map: dict[str, str]) -> str:
-    """行内元素：先转义，再依次处理图片/链接/加粗/斜体/行内代码。"""
+_CODE_HTML_RE = re.compile(r"<code[^>]*>.*?</code>", re.S)
+
+
+def _math_html(
+    tex: str, math_map: dict[str, str] | None, display: bool = False
+) -> str:
+    """公式 → 图片；math_map 未命中时退回 $...$ 原文。"""
+    url = (math_map or {}).get(normalize_tex(tex))
+    if url:
+        css = (
+            "display:block;margin:0 auto;max-width:100%"
+            if display
+            else "vertical-align:middle;max-width:100%"
+        )
+        return f'<img src="{_attr(url)}" alt="{_attr(tex)}" style="{css}">'
+    return escape(f"$${tex}$$" if display else f"${tex}$")
+
+
+def _math_only(text: str, math_map: dict[str, str] | None) -> str:
+    return INLINE_MATH_RE.sub(
+        lambda m: _math_html(html.unescape(m.group("inline")), math_map), text
+    )
+
+
+def _replace_inline_math(text: str, math_map: dict[str, str] | None) -> str:
+    """在已转义的文本里替换行内公式，跳过 <code> 区域。"""
+    if not math_map:
+        return text
+    out: list[str] = []
+    pos = 0
+    for m in _CODE_HTML_RE.finditer(text):
+        out.append(_math_only(text[pos : m.start()], math_map))
+        out.append(m.group(0))
+        pos = m.end()
+    out.append(_math_only(text[pos:], math_map))
+    return "".join(out)
+
+
+def _inline(
+    text: str,
+    theme: WeChatTheme,
+    image_map: dict[str, str],
+    math_map: dict[str, str] | None = None,
+) -> str:
+    """行内元素：先转义，再依次处理图片/链接/加粗/斜体/行内代码/公式。"""
     text = escape(text)
     text = _IMG_INLINE_RE.sub(
         lambda m: (
@@ -104,7 +148,7 @@ def _inline(text: str, theme: WeChatTheme, image_map: dict[str, str]) -> str:
         lambda m: _tag("code", m.group(1), theme.css("code")),
         text,
     )
-    return text
+    return _replace_inline_math(text, math_map)
 
 
 def _looks_like_caption(line: str) -> bool:
@@ -120,8 +164,29 @@ def _strip_caption(line: str) -> str:
     return m.group(1) if m else line
 
 
+def _take_display_math(lines: list[str], start: int) -> tuple[str, int]:
+    """从 lines[start] 取出一段块级公式，返回 (tex, 下一行索引)。"""
+    first = lines[start].strip()
+    if first.endswith("$$") and len(first) > 4:
+        return first[2:-2].strip(), start + 1
+    body: list[str] = [first[2:]]
+    i = start + 1
+    while i < len(lines):
+        line = lines[i].strip()
+        if line.endswith("$$"):
+            body.append(line[:-2])
+            return "\n".join(body).strip(), i + 1
+        body.append(lines[i])
+        i += 1
+    return "\n".join(body).strip(), i
+
+
 def _render_table(
-    lines: list[str], start: int, theme: WeChatTheme, image_map: dict[str, str]
+    lines: list[str],
+    start: int,
+    theme: WeChatTheme,
+    image_map: dict[str, str],
+    math_map: dict[str, str] | None = None,
 ) -> tuple[str, int]:
     """渲染 GFM 管道表格，返回 (html, 下一行索引)。"""
 
@@ -139,13 +204,13 @@ def _render_table(
     th_style = theme.css("th")
     td_style = theme.css("td")
     head_html = "".join(
-        f"<th{style_attr(th_style)}>{_inline(c, theme, image_map)}</th>"
+        f"<th{style_attr(th_style)}>{_inline(c, theme, image_map, math_map)}</th>"
         for c in header
     )
     rows_html = []
     for row in body:
         tds = "".join(
-            f"<td{style_attr(td_style)}>{_inline(c, theme, image_map)}</td>"
+            f"<td{style_attr(td_style)}>{_inline(c, theme, image_map, math_map)}</td>"
             for c in row
         )
         rows_html.append(f"<tr>{tds}</tr>")
@@ -160,6 +225,7 @@ def render_markdown_html(
     md: str,
     theme: WeChatTheme | None = None,
     image_map: dict[str, str] | None = None,
+    math_map: dict[str, str] | None = None,
 ) -> str:
     """把 Markdown 渲染为带 inline style 的微信公众号 HTML。
 
@@ -198,7 +264,11 @@ def render_markdown_html(
             level = min(len(m.group(1)), 6)
             key = f"h{level}"
             blocks.append(
-                _tag(key, _inline(m.group(2).strip(), theme, image_map), theme.css(key))
+                _tag(
+                    key,
+                    _inline(m.group(2).strip(), theme, image_map, math_map),
+                    theme.css(key),
+                )
             )
             i += 1
             continue
@@ -225,7 +295,7 @@ def render_markdown_html(
                 parts = [
                     _tag(
                         "p",
-                        _inline(title, theme, image_map),
+                        _inline(title, theme, image_map, math_map),
                         theme.css("calloutTitle"),
                     )
                 ]
@@ -233,13 +303,15 @@ def render_markdown_html(
                     parts.append(
                         _tag(
                             "p",
-                            _inline(line, theme, image_map),
+                            _inline(line, theme, image_map, math_map),
                             theme.css("calloutText"),
                         )
                     )
                 blocks.append(_tag("section", "".join(parts), theme.css("callout")))
                 continue
-            body = "<br>".join(_inline(q, theme, image_map) for q in quote)
+            body = "<br>".join(
+                _inline(q, theme, image_map, math_map) for q in quote
+            )
             blocks.append(_tag("blockquote", body, theme.css("blockquote")))
             continue
 
@@ -254,7 +326,9 @@ def render_markdown_html(
                 mm = pattern.match(s)
                 if not mm:
                     break
-                items.append(_inline(s[mm.end():].strip(), theme, image_map))
+                items.append(
+                    _inline(s[mm.end():].strip(), theme, image_map, math_map)
+                )
                 i += 1
             li = "".join(
                 f"<li{style_attr(theme.css('li'))}>{item}</li>" for item in items
@@ -268,7 +342,7 @@ def render_markdown_html(
             and i + 1 < total
             and _TABLE_SEP_RE.match(lines[i + 1])
         ):
-            table, i = _render_table(lines, i, theme, image_map)
+            table, i = _render_table(lines, i, theme, image_map, math_map)
             blocks.append(table)
             continue
 
@@ -295,16 +369,32 @@ def render_markdown_html(
                 blocks.append(
                     _tag(
                         "p",
-                        _inline(caption, theme, image_map),
+                        _inline(caption, theme, image_map, math_map),
                         theme.css("caption"),
                     )
                 )
                 i = j + 1
             continue
 
+        # 块级公式（独占一行或 $$ 围栏）
+        if stripped.startswith("$$"):
+            tex, i = _take_display_math(lines, i)
+            blocks.append(
+                _tag(
+                    "p",
+                    _math_html(tex, math_map, display=True),
+                    {"margin": "0", "text-align": "center"},
+                )
+            )
+            continue
+
         # 普通段落
         blocks.append(
-            _tag("p", _inline(stripped, theme, image_map), theme.css("paragraph"))
+            _tag(
+                "p",
+                _inline(stripped, theme, image_map, math_map),
+                theme.css("paragraph"),
+            )
         )
         i += 1
 

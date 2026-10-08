@@ -53,3 +53,41 @@ def test_render_math_png_produces_png(tex):
 
 def test_render_math_png_returns_none_on_unsupported():
     assert render_math_png(r"\begin{align} a &= b \end{align}") is None
+
+
+from publishers.wechat.renderer import render_markdown_html
+
+
+def test_renderer_replaces_inline_math_with_img_when_mapped():
+    html = render_markdown_html(
+        "目标 $V_i$ 最大", math_map={r"V_i": "https://mmbiz/x.png"}
+    )
+    assert '<img src="https://mmbiz/x.png"' in html
+    assert "$V_i$" not in html
+
+
+def test_renderer_falls_back_to_literal_when_unmapped():
+    html = render_markdown_html("目标 $V_i$ 最大")
+    assert "$V_i$" in html
+
+
+def test_renderer_renders_display_math_centered():
+    html = render_markdown_html("$$a+b$$", math_map={"a+b": "https://mmbiz/d.png"})
+    assert 'src="https://mmbiz/d.png"' in html
+    assert "text-align:center" in html
+
+
+def test_renderer_ignores_dollar_in_inline_code():
+    html = render_markdown_html("价格 `$x$`", math_map={"x": "https://mmbiz/x.png"})
+    assert "https://mmbiz/x.png" not in html
+    assert "$x$" in html
+
+
+def test_renderer_renders_math_in_list_items():
+    md = "- 目标：$V_i$\n- 约束：$\\delta \\ge 0.25$"
+    html = render_markdown_html(
+        md,
+        math_map={r"V_i": "https://mmbiz/v.png", r"\delta \geq 0.25": "https://mmbiz/d.png"},
+    )
+    assert "https://mmbiz/v.png" in html
+    assert "https://mmbiz/d.png" in html
