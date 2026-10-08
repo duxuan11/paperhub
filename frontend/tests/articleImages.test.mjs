@@ -49,6 +49,30 @@ test("removeImage 删除内联占位符并重编号", () => {
   assert.equal(out, "看图 $x$ 和 {{figure:1}} 以及 {{figure:0}}");
 });
 
+test("removeImage 删除图片行时只局部收敛前后的空行", () => {
+  const content = ["A", "", "![Figure 1]({{figure:0}})", "", "B"].join("\n");
+  const { content: out, images } = removeImage(content, ["a"], 0);
+  assert.equal(out, "A\n\nB");
+  assert.deepEqual(images, []);
+});
+
+test("removeImage 不触碰代码块内的连续空行", () => {
+  const content = [
+    "![Figure 1]({{figure:0}})",
+    "```",
+    "a",
+    "",
+    "",
+    "b",
+    "```",
+    "",
+    "B",
+  ].join("\n");
+  const { content: out } = removeImage(content, ["a"], 0);
+  // 代码块内连续空行必须逐字节保留
+  assert.equal(out, "```\na\n\n\nb\n```\n\nB");
+});
+
 test("removeImage 下标越界时原样返回", () => {
   const { content, images } = removeImage("x {{figure:0}}", ["a"], 5);
   assert.equal(content, "x {{figure:0}}");

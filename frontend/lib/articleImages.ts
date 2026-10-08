@@ -29,17 +29,33 @@ export function removeImage(
     return { content, images: [...images] };
   }
   const nextImages = images.filter((_, i) => i !== index);
-  const kept = content.split("\n").filter((line) => {
+  // 只删除「独占一行的 `{{figure:index}}` 图片引用」所在的整行；
+  // 不在正文其它位置做任何空行规整（代码块内空行必须逐字节保留）。
+  const lines = content.split("\n");
+  const kept: string[] = [];
+  let skipNextBlank = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (skipNextBlank) {
+      skipNextBlank = false;
+      if (line === "") continue; // 与被删行配对的空行，局部队消一个
+    }
     const m = IMAGE_LINE_RE.exec(line.trim());
-    return !(m && Number(m[2]) === index);
-  });
-  let nextContent = kept.join("\n").replace(FIGURE_TOKEN_RE, (token, n: string) => {
+    if (m && Number(m[2]) === index) {
+      const prevKept = kept.length > 0 ? kept[kept.length - 1] : undefined;
+      if (prevKept === "" && lines[i + 1] === "") {
+        skipNextBlank = true; // 前后都是空行时，只删掉其中一个
+      }
+      continue;
+    }
+    kept.push(line);
+  }
+  const nextContent = kept.join("\n").replace(FIGURE_TOKEN_RE, (token, n: string) => {
     const i = Number(n);
     if (i === index) return "";
     if (i > index) return `{{figure:${i - 1}}}`;
     return token;
   });
-  nextContent = nextContent.replace(/\n{3,}/g, "\n\n");
   return { content: nextContent, images: nextImages };
 }
 
