@@ -31,12 +31,17 @@ _COVER_EXT = {
 _MAX_COVER_BYTES = 10 * 1024 * 1024
 
 
-def _cover_ext(content_type: str | None, filename: str | None) -> str | None:
+def _image_ext(content_type: str | None, filename: str | None) -> str | None:
     ext = _COVER_EXT.get((content_type or "").lower())
     if ext:
         return ext
     suffix = Path(filename or "").suffix.lower()
     return suffix if suffix in {v for v in _COVER_EXT.values()} else None
+
+
+def _append_image(images: list[str] | None, key: str) -> list[str]:
+    """把新图 key 追加到文章图片列表（None 视作空列表）。"""
+    return [*(images or []), key]
 
 ACTION_PROMPTS = {
     "polish": "请润色以下公众号文章，使语言更流畅、专业、易读，保持结构不变，输出完整 Markdown。",
@@ -96,7 +101,7 @@ async def upload_article_cover(
         raise HTTPException(status_code=400, detail="封面文件为空")
     if len(data) > _MAX_COVER_BYTES:
         raise HTTPException(status_code=400, detail="封面图片不能超过 10MB")
-    ext = _cover_ext(file.content_type, file.filename)
+    ext = _image_ext(file.content_type, file.filename)
     if not ext:
         raise HTTPException(
             status_code=400, detail="封面仅支持 PNG / JPG / WEBP / GIF 图片"
@@ -104,6 +109,37 @@ async def upload_article_cover(
     key = f"articles/{article_id}/cover/{uuid.uuid4().hex[:12]}{ext}"
     storage.put_bytes(key, data, file.content_type or "image/png")
     art.cover_image = key
+    await session.commit()
+    await session.refresh(art)
+    return art
+
+
+@router.post("/{article_id}/images", response_model=ArticleOut)
+async def upload_article_image(
+    article_id: str,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+):
+    """上传一张正文配图，追加到 article.images（返回下标即最后一项）。
+
+    编辑器新增图片后据此在光标处插入 `![alt]({{figure:N}})`。
+    """
+    art = await repositories.get_article(session, article_id)
+    if not art:
+        raise HTTPException(status_code=404, detail="文章不存在")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="图片文件为空")
+    if len(data) > _MAX_COVER_BYTES:
+        raise HTTPException(status_code=400, detail="图片不能超过 10MB")
+    ext = _image_ext(file.content_type, file.filename)
+    if not ext:
+        raise HTTPException(
+            status_code=400, detail="仅支持 PNG / JPG / WEBP / GIF 图片"
+        )
+    key = f"articles/{article_id}/images/{uuid.uuid4().hex[:12]}{ext}"
+    storage.put_bytes(key, data, file.content_type or "image/png")
+    art.images = _append_image(art.images, key)
     await session.commit()
     await session.refresh(art)
     return art

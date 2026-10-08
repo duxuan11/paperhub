@@ -292,6 +292,7 @@ class ArticleUpdateRequest(BaseModel):
     author: str | None = None
     theme: str | None = None
     cover_image: str | None = None
+    images: list[str] | None = None
 
 
 class PublishRequest(BaseModel):
